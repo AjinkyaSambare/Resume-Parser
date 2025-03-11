@@ -268,6 +268,7 @@ class AzureOpenAIProcessor:
                 'certifications': '',
                 'work_history': [],
                 'work_history_summary': '',
+                'match_score': 0,
                 'filename': os.path.basename(file_path),
                 'file_path': file_path,
                 'error': str(e)
@@ -488,7 +489,7 @@ RESUME TEXT:
     
     def _create_resume_parsing_prompt_with_filters(self, resume_text, user_filters, name_hint=None):
         """
-        Create a prompt for GPT-4o to extract information from a resume with user filter context
+        Create an enhanced prompt for GPT-4o to extract information and provide matching analysis
         
         Parameters:
         - resume_text: The text content of the resume
@@ -496,7 +497,7 @@ RESUME TEXT:
         - name_hint: Optional hint for the candidate's name (extracted from filename)
         
         Returns:
-        - Prompt for GPT-4o
+        - Prompt for GPT-4o with match analysis instructions
         """
         # Build filter context string
         filter_context = "The evaluator is specifically looking for candidates with these qualifications:\n"
@@ -527,59 +528,28 @@ RESUME TEXT:
         if name_hint:
             name_hint_text = f"\nHINT: The candidate's name might be '{name_hint}' based on the filename."
         
-        prompt = f"""You are an expert resume parser with extensive experience in HR and technical recruiting. Your task is to extract precise information from the resume text below, following these detailed guidelines.{name_hint_text}
+        prompt = f"""You are an expert resume parser and talent evaluator. Extract precise information from this resume and evaluate how well the candidate matches the job requirements.{name_hint_text}
 
-# SPECIAL INSTRUCTIONS FOR COMPLEX FORMATTING
-This resume may have unusual formatting with asterisks (**), special characters, or non-standard layouts.
-- Look for the name which might be in the format **Name** or could be anywhere in the document
-- Extract all skills mentioned throughout the document, including in project descriptions
-- Consider internships as valid experience and count them in the total years
-- Extract phone numbers, emails, and location information wherever they appear
-- Parse education information even when it's mixed with formatting characters
-- Be thorough in identifying technologies mentioned in project descriptions
-
-# HIRING CONTEXT
+# JOB REQUIREMENTS - IMPORTANT
 {filter_context}
-Pay special attention to these requirements during your analysis and be very thorough in extracting relevant information.
+Pay special attention to these requirements throughout your analysis.
 
-# EXTRACTION GUIDELINES:
+# RESUME EXTRACTION GUIDELINES:
+1. Extract all personal information accurately (name, email, phone, location)
+2. Calculate total years of experience (include internships)
+3. Extract all education details (degrees, institutions, years, fields of study)
+4. Extract ALL technical skills mentioned throughout the resume, including in project descriptions
+5. Extract work history with dates, companies, positions, and key responsibilities
+6. Extract languages, certifications, and online profiles
 
-## Personal Information
-1. Name: Extract the full name exactly as presented (check for **Name** patterns or standalone names)
-2. Email: Extract complete email address (search the entire document)
-3. Phone: Extract phone number with all digits and formatting (search the entire document)
-4. Location: Extract city, state/province, country information (look at the beginning and end of document)
-
-## Professional Details
-5. Work Experience:
-   - Calculate total years of experience accurately (round to nearest whole number)
-   - COUNT INTERNSHIPS as valid experience
-   - Identify all companies and positions held
-   - Extract dates of employment
-   - Note key responsibilities and achievements
-   - Pay special attention to experience related to the required skills
-
-6. Education:
-   - Extract all degrees, major fields of study
-   - Extract educational institutions
-   - Extract graduation years
-   - Note any academic honors or GPA if mentioned
-
-7. Online Profiles:
-   - Extract complete LinkedIn URL if present (ensure it's the full URL)
-   - Extract complete GitHub URL if present (ensure it's the full URL)
-   - Extract any other professional profiles mentioned
-
-8. Technical Information:
-   - Skills: Extract ALL technical skills mentioned ANYWHERE in the resume
-   - Include technologies mentioned in project descriptions
-   - Be extra thorough in identifying skills that match the required skills list
-   - Languages: Extract all human languages mentioned with proficiency levels if specified
-   - Certifications: Extract all professional certifications with dates if mentioned
+# CANDIDATE EVALUATION GUIDELINES:
+1. Give a precise match score from 0-100 based on how well the candidate matches the job requirements
+2. Provide 3-5 specific reasons why the candidate is a good match, with concrete examples from their resume
+3. Identify any gaps between the candidate's qualifications and the job requirements
+4. Be objective and evidence-based in your evaluation
 
 # FORMAT REQUIREMENTS:
-
-Create a clean, structured JSON object with these exact fields:
+Create a clean JSON object with these exact fields:
 {{
   "name": string (full name),
   "email": string (complete email),
@@ -589,15 +559,16 @@ Create a clean, structured JSON object with these exact fields:
   "work_history": Array of objects with company, position, dates, and responsibilities,
   "education": Array of objects with degree, institution, year, and field of study,
   "skills": Array of strings (all technical skills),
-  "linkedin": string (complete URL or empty string if not present),
-  "github": string (complete URL or empty string if not present),
+  "linkedin": string (complete URL),
+  "github": string (complete URL),
   "languages": Array of objects with language name and proficiency level,
   "certifications": Array of strings (all certifications),
-  "match_score": number between 0-100 representing how well this candidate matches the filter criteria,
-  "match_reasons": Array of strings explaining why this candidate is a good match for specific requirements
+  "match_score": number between 0-100 representing how well this candidate matches the requirements,
+  "match_reasons": Array of strings explaining why this candidate is a good match (with specific examples),
+  "gap_analysis": Array of strings identifying skills or qualifications the candidate is missing
 }}
 
-Your output must be ONLY the JSON object without any additional text. Ensure the JSON is valid and properly formatted.
+Your output must be ONLY the JSON object without any additional text. Ensure the JSON is valid.
 
 RESUME TEXT:
 {resume_text}
@@ -633,25 +604,25 @@ RESUME TEXT:
                 
                 for field in required_fields:
                     if field not in extracted_info:
-                        if field in ['work_history', 'education', 'skills', 'languages', 'certifications', 'match_reasons']:
+                        if field in ['work_history', 'education', 'skills', 'languages', 'certifications', 'match_reasons', 'gap_analysis']:
                             extracted_info[field] = []
                         else:
                             extracted_info[field] = ""
                 
                 # Ensure experience is numeric
                 try:
-                    extracted_info['experience'] = int(extracted_info['experience'])
+                    extracted_info['experience'] = int(extracted_info['experience']) if extracted_info.get('experience') is not None else 0
                 except (ValueError, TypeError):
                     extracted_info['experience'] = 0
                 
                 # Format array fields to strings for compatibility with existing code
-                if isinstance(extracted_info['skills'], list):
-                    extracted_info['skills'] = ', '.join(extracted_info['skills'])
+                if isinstance(extracted_info.get('skills', []), list):
+                    extracted_info['skills'] = ', '.join(extracted_info.get('skills', []))
                 
                 # Format education array into a string
-                if isinstance(extracted_info['education'], list):
+                if isinstance(extracted_info.get('education', []), list):
                     education_parts = []
-                    for edu in extracted_info['education']:
+                    for edu in extracted_info.get('education', []):
                         if isinstance(edu, dict):
                             edu_str = ""
                             if 'degree' in edu:
@@ -668,9 +639,9 @@ RESUME TEXT:
                     extracted_info['education'] = "; ".join(education_parts)
                 
                 # Format languages array into a string
-                if isinstance(extracted_info['languages'], list):
+                if isinstance(extracted_info.get('languages', []), list):
                     language_parts = []
-                    for lang in extracted_info['languages']:
+                    for lang in extracted_info.get('languages', []):
                         if isinstance(lang, dict) and 'name' in lang:
                             lang_str = lang['name']
                             if 'proficiency' in lang:
@@ -681,13 +652,13 @@ RESUME TEXT:
                     extracted_info['languages'] = ", ".join(language_parts)
                 
                 # Format certifications array into a string
-                if isinstance(extracted_info['certifications'], list):
-                    extracted_info['certifications'] = ", ".join(extracted_info['certifications'])
+                if isinstance(extracted_info.get('certifications', []), list):
+                    extracted_info['certifications'] = ", ".join(extracted_info.get('certifications', []))
                 
                 # Add a formatted work history summary
-                if isinstance(extracted_info['work_history'], list) and extracted_info['work_history']:
+                if isinstance(extracted_info.get('work_history', []), list) and extracted_info.get('work_history', []):
                     work_history_parts = []
-                    for job in extracted_info['work_history']:
+                    for job in extracted_info.get('work_history', []):
                         if isinstance(job, dict):
                             job_str = ""
                             if 'position' in job:
@@ -704,15 +675,21 @@ RESUME TEXT:
                     extracted_info['work_history_summary'] = ""
                 
                 # Format match reasons into a string if present
-                if 'match_reasons' in extracted_info and isinstance(extracted_info['match_reasons'], list):
-                    extracted_info['match_reasons_text'] = "- " + "\n- ".join(extracted_info['match_reasons'])
+                if 'match_reasons' in extracted_info and isinstance(extracted_info.get('match_reasons', []), list):
+                    extracted_info['match_reasons_text'] = "- " + "\n- ".join(extracted_info.get('match_reasons', []))
                 else:
                     extracted_info['match_reasons_text'] = ""
+                
+                # Format gap analysis into a string if present
+                if 'gap_analysis' in extracted_info and isinstance(extracted_info.get('gap_analysis', []), list) and extracted_info.get('gap_analysis', []):
+                    extracted_info['gap_analysis_text'] = "Areas for improvement:\n- " + "\n- ".join(extracted_info.get('gap_analysis', []))
+                else:
+                    extracted_info['gap_analysis_text'] = "No significant gaps identified."
                     
                 # Ensure match score is present
                 if 'match_score' not in extracted_info:
                     extracted_info['match_score'] = 0
-                    
+                
                 return extracted_info
             else:
                 raise ValueError("No JSON object found in response")
@@ -734,5 +711,7 @@ RESUME TEXT:
                 'work_history_summary': '',
                 'match_score': 0,
                 'match_reasons': [],
-                'match_reasons_text': ''
+                'match_reasons_text': '',
+                'gap_analysis': [],
+                'gap_analysis_text': 'No analysis available.'
             }
