@@ -1,14 +1,15 @@
-# AI-Powered Resume Matcher with Azure OpenAI Integration
+# ResumeParser
 
-A Streamlit application that finds the perfect candidates from your resume collection using Azure OpenAI's GPT-4o model.
+A modern, AI-powered resume parsing application with natural language filtering capabilities.
 
 ## Features
 
-- **Simple Workflow**: Upload resumes, describe what you're looking for, and get results in one step
-- **Natural Language Search**: Use everyday language to describe your ideal candidate
-- **Smart Matching**: AI-powered matching provides scores and detailed explanations
-- **Custom Columns**: Add any information you need with a simple prompt
-- **Excel Export**: Export your results with one click
+- **Clean, Modern UI**: Intuitive interface for uploading and analyzing resumes
+- **Natural Language Filtering**: Use everyday language to find the perfect candidates
+- **Multiple File Formats**: Support for PDF, DOC, DOCX, and TXT resume formats
+- **Custom Columns**: Extract specific information from resumes with a simple prompt
+- **Export Functionality**: Easily export your parsed data to Excel
+- **Sample Data**: Try the app with sample resumes to see how it works
 
 ## Installation
 
@@ -16,15 +17,15 @@ A Streamlit application that finds the perfect candidates from your resume colle
 
 - Python 3.8 or higher
 - pip (Python package installer)
-- Azure OpenAI API key
+- Google Gemini API key (optional but recommended for advanced features)
 
 ### Setup
 
-1. Clone the repository or download the source code:
+1. Clone the repository:
 
 ```bash
 git clone <repository-url>
-cd resume-matcher
+cd ResumeParser
 ```
 
 2. Create a virtual environment (optional but recommended):
@@ -40,15 +41,14 @@ source venv/bin/activate  # On Windows, use: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Configure Azure OpenAI:
+4. Configure Google Gemini (optional):
 
-Create a `.streamlit/secrets.toml` file with your Azure OpenAI credentials:
+Create a `.streamlit/secrets.toml` file with your Gemini API key:
 
 ```toml
-# Azure OpenAI API credentials
-[azure_openai]
-api_key = "your_api_key_here"
-endpoint = "https://access-01.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview"
+# Google Gemini API credentials
+[gemini]
+api_key = "your_gemini_api_key_here"
 ```
 
 ## Usage
@@ -61,27 +61,28 @@ streamlit run app.py
 
 2. Access the application in your web browser (typically at http://localhost:8501)
 
-3. Upload your resume files using the file uploader
+3. Upload resume files by dragging and dropping or browsing your computer
 
-4. Describe what you're looking for in a candidate using natural language
+4. Use natural language to filter candidates (e.g., "Java developers with 5+ years experience")
 
-5. Click "Find Matching Candidates" to process the resumes
-
-6. View your results and export them to Excel if needed
+5. View the results and export them to Excel if needed
 
 ## How It Works
 
-1. **Upload**: Multiple resume files (PDF, DOCX, TXT) are processed in batches
-2. **Natural Language Processing**: Your requirements are converted into structured criteria
-3. **AI Analysis**: Each resume is analyzed by Azure OpenAI GPT-4o
-4. **Smart Matching**: Candidates are ranked with detailed match explanations
-5. **Custom Information**: Extract any specific information you need with a simple prompt
+1. **Upload**: Drag and drop your resume files (PDF, DOC, DOCX, TXT)
+2. **Process**: AI-powered parsing extracts structured information from each resume
+3. **Filter**: Use natural language to find candidates matching your criteria
+4. **Customize**: Add custom columns to extract specific information from resumes
+5. **Export**: Download the results as an Excel file for further analysis
 
-## Coming Soon
+## Sample Data
 
-- Email fetching to automatically process resumes from your inbox
-- More visualization options for candidate comparison
-- Advanced filtering capabilities
+The application comes with a sample data option. Click "Load sample resumes" to try the application with pre-loaded sample resumes.
+
+To add your own sample data:
+1. Create PDF or DOCX resume files
+2. Place them in the `data/samples` directory
+3. They will be available when you click the "Load sample resumes" button
 
 ## License
 

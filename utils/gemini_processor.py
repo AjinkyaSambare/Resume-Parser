@@ -1,19 +1,47 @@
+"""
+Google Gemini processor for Resume Parser application.
+This module handles communication with Google's Generative AI API.
+"""
+
 import os
 import json
 import time
 import random
-import requests
 import threading
 from queue import Queue
+import concurrent.futures
 from pathlib import Path
 from utils.file_handler import get_text_from_file
 from utils.preprocessor import extract_name_from_file
+
+# Check if Google Generative AI is available
+GEMINI_AVAILABLE = False
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    print("Google Generative AI package not available. Gemini features will be disabled.")
+    # Create a placeholder for genai if it's not available
+    class GenaiPlaceholder:
+        def configure(self, *args, **kwargs):
+            pass
+        
+        class GenerativeModel:
+            def __init__(self, *args, **kwargs):
+                pass
+                
+            def generate_content(self, *args, **kwargs):
+                class Response:
+                    text = "Google Generative AI not available"
+                return Response()
+    
+    genai = GenaiPlaceholder()
 
 class RateLimiter:
     """
     Implements rate limiting for API calls with adaptive backoff
     """
-    def __init__(self, initial_delay=5, max_delay=120, backoff_factor=1.5):
+    def __init__(self, initial_delay=1, max_delay=60, backoff_factor=1.5):
         self.current_delay = initial_delay
         self.max_delay = max_delay
         self.backoff_factor = backoff_factor
@@ -32,7 +60,7 @@ class RateLimiter:
         """Call after successful request to gradually decrease wait time"""
         with self.lock:
             # Gradually decrease delay after successful calls, but not below initial
-            self.current_delay = max(self.current_delay / 1.2, 5)
+            self.current_delay = max(self.current_delay / 1.2, 1)
     
     def failure(self):
         """Call after rate limit failure to increase wait time"""
@@ -52,10 +80,11 @@ class ProcessingQueue:
         self.results = {}
         self.processing = False
         self.worker_thread = None
+        self.lock = threading.Lock()
     
     def add_task(self, file_path, user_filters=None, callback=None):
         """Add a resume processing task to the queue"""
-        task_id = Path(file_path).stem
+        task_id = str(Path(file_path).stem)
         self.queue.put((task_id, file_path, user_filters))
         self.results[task_id] = {"status": "queued", "data": None, "error": None}
         
@@ -80,7 +109,7 @@ class ProcessingQueue:
             task_id, file_path, user_filters = self.queue.get()
             
             # Update status to processing
-            with self.processor.lock:
+            with self.lock:
                 self.results[task_id]["status"] = "processing"
             
             try:
@@ -91,7 +120,7 @@ class ProcessingQueue:
                     result = self.processor.analyze_document(file_path)
                 
                 # Store the result
-                with self.processor.lock:
+                with self.lock:
                     self.results[task_id] = {
                         "status": "completed",
                         "data": result,
@@ -99,7 +128,7 @@ class ProcessingQueue:
                     }
             
             except Exception as e:
-                with self.processor.lock:
+                with self.lock:
                     self.results[task_id] = {
                         "status": "failed",
                         "data": None,
@@ -112,12 +141,12 @@ class ProcessingQueue:
     
     def get_result(self, task_id):
         """Get the result of a specific task"""
-        with self.processor.lock:
+        with self.lock:
             return self.results.get(task_id, {"status": "unknown", "data": None, "error": None})
     
     def get_all_results(self):
         """Get all completed results"""
-        with self.processor.lock:
+        with self.lock:
             return {task_id: data["data"] for task_id, data in self.results.items() 
                     if data["status"] == "completed" and data["data"] is not None}
     
@@ -127,28 +156,34 @@ class ProcessingQueue:
     
     def get_all_task_statuses(self):
         """Get the status of all tasks"""
-        with self.processor.lock:
+        with self.lock:
             return {task_id: data["status"] for task_id, data in self.results.items()}
 
 
-class AzureOpenAIProcessor:
+class GeminiProcessor:
     """
-    Enhanced class to handle processing documents using Azure OpenAI GPT-4o
-    with robust rate limiting and fallback mechanisms
+    Class to handle processing documents using Google's Gemini model
+    with robust rate limiting and queue management
     """
-    def __init__(self, endpoint, api_key, max_retries=5):
-        self.endpoint = endpoint
+    def __init__(self, api_key, model="gemini-1.5-pro"):
         self.api_key = api_key
-        self.model = "gpt-4o"
-        self.api_version = "2024-08-01-preview"
-        self.max_retries = max_retries
+        self.model = model
         self.rate_limiter = RateLimiter()
         self.lock = threading.Lock()
         self.queue = ProcessingQueue(self)
+        
+        if not GEMINI_AVAILABLE:
+            print("Warning: Google Generative AI package not available. Gemini features will be limited.")
+        
+        # Configure the Gemini API
+        try:
+            genai.configure(api_key=api_key)
+        except Exception as e:
+            print(f"Error configuring Gemini: {e}")
     
     def analyze_document(self, file_path):
         """
-        Analyze a document using Azure OpenAI GPT-4o with rate limiting
+        Analyze a document using Gemini with structured output
         
         Parameters:
         - file_path: Path to the document file
@@ -156,6 +191,26 @@ class AzureOpenAIProcessor:
         Returns:
         - Extracted information as a dictionary
         """
+        if not GEMINI_AVAILABLE:
+            return {
+                'name': "Error: Google Generative AI not available",
+                'email': '',
+                'phone': '',
+                'education': '',
+                'experience': 0,
+                'skills': '',
+                'location': '',
+                'linkedin': '',
+                'github': '',
+                'languages': '',
+                'certifications': '',
+                'work_history': [],
+                'work_history_summary': '',
+                'filename': os.path.basename(file_path),
+                'file_path': file_path,
+                'error': "Google Generative AI package not installed"
+            }
+            
         try:
             # Try to extract name from filename as a hint
             name_from_filename = extract_name_from_file(file_path)
@@ -163,20 +218,20 @@ class AzureOpenAIProcessor:
             # Extract text from file (includes preprocessing)
             text = get_text_from_file(file_path)
             
-            # Trim text if it's too long (Azure OpenAI has a token limit)
-            if len(text) > 15000:  # Approximate limit to stay within token constraints
-                print(f"Warning: Document {file_path} is very long ({len(text)} chars). Truncating to 15000 chars.")
-                text = text[:15000]
+            # Trim text if it's too long
+            if len(text) > 30000:  # Gemini can handle more tokens than GPT-4o
+                print(f"Warning: Document {file_path} is very long ({len(text)} chars). Truncating.")
+                text = text[:30000]
             
             # Check if text extraction was successful
-            if not text or len(text) < 50:  # If text is too short, likely extraction failed
+            if not text or len(text) < 50:
                 raise ValueError(f"Failed to extract meaningful text from {file_path}. Text length: {len(text)}")
             
             # Prepare the prompt for resume parsing
             prompt = self._create_resume_parsing_prompt(text, name_from_filename)
             
-            # Call Azure OpenAI API with rate limiting and retries
-            response = self._call_azure_openai_with_retry(prompt)
+            # Call Gemini API with retry logic
+            response = self._call_gemini_with_retry(prompt)
             
             # Parse the response
             extracted_info = self._parse_response(response)
@@ -189,7 +244,7 @@ class AzureOpenAIProcessor:
             return extracted_info
         except Exception as e:
             print(f"Error analyzing document {file_path}: {e}")
-            # Return a structured error object instead of empty dict
+            # Return a structured error object
             return {
                 'name': f"Error: {str(e)[:50]}...",
                 'email': '',
@@ -211,8 +266,7 @@ class AzureOpenAIProcessor:
     
     def analyze_document_with_filters(self, file_path, user_filters):
         """
-        Analyze a document using Azure OpenAI GPT-4o, incorporating user filter preferences
-        with rate limiting and retries
+        Analyze a document using Gemini, incorporating user filter preferences
         
         Parameters:
         - file_path: Path to the document file
@@ -221,39 +275,54 @@ class AzureOpenAIProcessor:
         Returns:
         - Extracted information as a dictionary
         """
-        try:
-            # Try to extract name from filename as a hint
-            name_from_filename = extract_name_from_file(file_path)
+        if not GEMINI_AVAILABLE:
+            return {
+                'name': "Error: Google Generative AI not available",
+                'email': '',
+                'phone': '',
+                'education': '',
+                'experience': 0,
+                'skills': '',
+                'location': '',
+                'linkedin': '',
+                'github': '',
+                'languages': '',
+                'certifications': '',
+                'work_history': [],
+                'work_history_summary': '',
+                'match_score': 0,
+                'filename': os.path.basename(file_path),
+                'file_path': file_path,
+                'error': "Google Generative AI package not installed"
+            }
             
-            # Extract text from file (includes preprocessing)
+        try:
+            # Extract name and text, similar to analyze_document
+            name_from_filename = extract_name_from_file(file_path)
             text = get_text_from_file(file_path)
             
-            # Trim text if it's too long (Azure OpenAI has a token limit)
-            if len(text) > 15000:  # Approximate limit to stay within token constraints
-                print(f"Warning: Document {file_path} is very long ({len(text)} chars). Truncating to 15000 chars.")
-                text = text[:15000]
+            if len(text) > 30000:
+                text = text[:30000]
             
-            # Check if text extraction was successful
-            if not text or len(text) < 50:  # If text is too short, likely extraction failed
-                raise ValueError(f"Failed to extract meaningful text from {file_path}. Text length: {len(text)}")
+            if not text or len(text) < 50:
+                raise ValueError(f"Failed to extract meaningful text from {file_path}.")
             
-            # Prepare the prompt for resume parsing with user filters incorporated
+            # Create prompt with filters
             prompt = self._create_resume_parsing_prompt_with_filters(text, user_filters, name_from_filename)
             
-            # Call Azure OpenAI API with rate limiting and retries
-            response = self._call_azure_openai_with_retry(prompt)
+            # Call Gemini API with retry logic
+            response = self._call_gemini_with_retry(prompt)
             
-            # Parse the response
+            # Parse response
             extracted_info = self._parse_response(response)
             
-            # Add filename for reference
+            # Add file info
             extracted_info['filename'] = os.path.basename(file_path)
             extracted_info['file_path'] = file_path
             
             return extracted_info
         except Exception as e:
             print(f"Error analyzing document with filters {file_path}: {e}")
-            # Return a structured error object instead of empty dict
             return {
                 'name': f"Error: {str(e)[:50]}...",
                 'email': '',
@@ -273,6 +342,70 @@ class AzureOpenAIProcessor:
                 'file_path': file_path,
                 'error': str(e)
             }
+    
+    def _call_gemini_with_retry(self, prompt, max_retries=3):
+        """
+        Call Gemini API with retries and backoff
+        
+        Parameters:
+        - prompt: The prompt for Gemini
+        - max_retries: Maximum number of retry attempts
+        
+        Returns:
+        - Response from Gemini
+        """
+        if not GEMINI_AVAILABLE:
+            return "Google Generative AI not available"
+            
+        attempts = 0
+        last_exception = None
+        
+        while attempts < max_retries:
+            try:
+                # Wait according to rate limiter
+                self.rate_limiter.wait()
+                
+                # Call Gemini
+                response = self._call_gemini(prompt)
+                
+                # Update rate limiter on success
+                self.rate_limiter.success()
+                
+                return response
+            except Exception as e:
+                last_exception = e
+                attempts += 1
+                
+                # Update rate limiter and wait before retry
+                wait_time = self.rate_limiter.failure()
+                print(f"API error: {str(e)}. Retrying after {wait_time:.2f} seconds. Attempt {attempts}/{max_retries}")
+                time.sleep(wait_time)
+        
+        # If all retries fail, raise the exception
+        raise Exception(f"Maximum retries ({max_retries}) exceeded: {str(last_exception)}")
+    
+    def _call_gemini(self, prompt):
+        """
+        Call the Gemini API with the given prompt
+        
+        Parameters:
+        - prompt: The prompt for Gemini
+        
+        Returns:
+        - Response text from Gemini
+        """
+        if not GEMINI_AVAILABLE:
+            return "Google Generative AI not available"
+            
+        try:
+            model = genai.GenerativeModel(self.model)
+            response = model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0}
+            )
+            return response.text
+        except Exception as e:
+            raise Exception(f"Gemini API call failed: {str(e)}")
     
     def queue_document_for_analysis(self, file_path, user_filters=None):
         """
@@ -317,102 +450,63 @@ class AzureOpenAIProcessor:
         """
         return self.queue.get_all_task_statuses()
     
-    def _call_azure_openai_with_retry(self, prompt):
+    def process_documents_in_parallel(self, file_paths, user_filters=None, max_workers=5):
         """
-        Call Azure OpenAI API with retries and exponential backoff
+        Process multiple documents in parallel
         
         Parameters:
-        - prompt: The prompt for GPT-4o
+        - file_paths: List of file paths to process
+        - user_filters: Optional user filters to apply
+        - max_workers: Maximum number of parallel workers
         
         Returns:
-        - Response from GPT-4o
+        - List of processed results
         """
-        attempts = 0
-        last_exception = None
-        
-        while attempts < self.max_retries:
-            try:
-                # Wait according to rate limiter
-                self.rate_limiter.wait()
-                
-                # Call the API
-                response = self._call_azure_openai(prompt)
-                
-                # Update rate limiter on success
-                self.rate_limiter.success()
-                
-                return response
+        if not GEMINI_AVAILABLE:
+            return [
+                {
+                    'name': f"Error processing {os.path.basename(file_path)}",
+                    'error': "Google Generative AI package not installed",
+                    'filename': os.path.basename(file_path),
+                    'file_path': file_path,
+                    'match_score': 0
+                }
+                for file_path in file_paths
+            ]
             
-            except Exception as e:
-                last_exception = e
-                attempts += 1
-                
-                # Check if it's a rate limit error
-                if isinstance(e, Exception) and "429" in str(e):
-                    # Update rate limiter with failure
-                    wait_time = self.rate_limiter.failure()
-                    print(f"Rate limit exceeded. Retrying after {wait_time:.2f} seconds. Attempt {attempts}/{self.max_retries}")
-                    time.sleep(wait_time)
-                else:
-                    # For other errors, use a smaller backoff
-                    wait_time = min(5 * attempts, 30)
-                    print(f"API error: {str(e)}. Retrying after {wait_time} seconds. Attempt {attempts}/{self.max_retries}")
-                    time.sleep(wait_time)
+        results = []
         
-        # If we've exhausted retries, raise the last exception
-        raise Exception(f"Maximum retries ({self.max_retries}) exceeded: {str(last_exception)}")
-    
-    def _call_azure_openai(self, prompt):
-        """
-        Call Azure OpenAI API with the given prompt
-        
-        Parameters:
-        - prompt: The prompt for GPT-4o
-        
-        Returns:
-        - Response from GPT-4o
-        """
-        headers = {
-            "Content-Type": "application/json",
-            "api-key": self.api_key
-        }
-        
-        data = {
-            "messages": [
-                {"role": "system", "content": "You are an expert resume parser that extracts structured information from resume text. You must always return valid JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 4000,
-            "temperature": 0.0,
-            "response_format": {"type": "json_object"}
-        }
-        
-        url = f"{self.endpoint}"
-        
-        try:
-            response = requests.post(url, headers=headers, json=data, timeout=60)
-            
-            if response.status_code == 200:
-                return response.json()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Create the processing tasks
+            if user_filters:
+                futures = {executor.submit(self.analyze_document_with_filters, file_path, user_filters): file_path 
+                          for file_path in file_paths}
             else:
-                raise Exception(f"API call failed with status code {response.status_code}: {response.text}")
-        except requests.exceptions.Timeout:
-            raise Exception("API call timed out. Please try again with a smaller document.")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"API call failed: {str(e)}")
-        except Exception as e:
-            raise Exception(f"Unexpected error during API call: {str(e)}")
+                futures = {executor.submit(self.analyze_document, file_path): file_path 
+                          for file_path in file_paths}
+            
+            # Process as they complete
+            for future in concurrent.futures.as_completed(futures):
+                file_path = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    print(f"Error processing {file_path}: {e}")
+                    # Add error result
+                    results.append({
+                        'name': f"Error processing {os.path.basename(file_path)}",
+                        'error': str(e),
+                        'filename': os.path.basename(file_path),
+                        'file_path': file_path,
+                        'match_score': 0
+                    })
+        
+        return results
     
     def _create_resume_parsing_prompt(self, resume_text, name_hint=None):
         """
-        Create a prompt for GPT-4o to extract information from a resume
-        
-        Parameters:
-        - resume_text: The text content of the resume
-        - name_hint: Optional hint for the candidate's name (extracted from filename)
-        
-        Returns:
-        - Prompt for GPT-4o
+        Create a prompt for Gemini to extract information from a resume
         """
         name_hint_text = ""
         if name_hint:
@@ -489,36 +583,23 @@ RESUME TEXT:
     
     def _create_resume_parsing_prompt_with_filters(self, resume_text, user_filters, name_hint=None):
         """
-        Create an enhanced prompt for GPT-4o to extract information and provide matching analysis
-        
-        Parameters:
-        - resume_text: The text content of the resume
-        - user_filters: Dictionary containing user's filter preferences
-        - name_hint: Optional hint for the candidate's name (extracted from filename)
-        
-        Returns:
-        - Prompt for GPT-4o with match analysis instructions
+        Create an enhanced prompt for Gemini to extract information and provide matching analysis
         """
         # Build filter context string
         filter_context = "The evaluator is specifically looking for candidates with these qualifications:\n"
         
-        # Add skills filter
         if user_filters.get('skills'):
             filter_context += f"- Skills required: {', '.join(user_filters['skills'])}\n"
         
-        # Add experience filter
         if user_filters.get('min_experience', 0) > 0:
             filter_context += f"- Minimum experience: {user_filters['min_experience']} years\n"
         
-        # Add education filter
         if user_filters.get('education_level') and user_filters['education_level'] != "Any":
             filter_context += f"- Education level: {user_filters['education_level']} or higher\n"
         
-        # Add location filter
         if user_filters.get('location'):
             filter_context += f"- Location preference: {user_filters['location']}\n"
         
-        # Add custom filters
         if user_filters.get('custom_filters'):
             for key, value in user_filters['custom_filters'].items():
                 if value:
@@ -577,24 +658,21 @@ RESUME TEXT:
     
     def _parse_response(self, response):
         """
-        Parse the response from GPT-4o
+        Parse the response from Gemini
         
         Parameters:
-        - response: The JSON response from GPT-4o
+        - response: The JSON response from Gemini
         
         Returns:
         - Extracted information as a dictionary
         """
         try:
-            # Extract the content from the response
-            content = response['choices'][0]['message']['content']
-            
             # Find the JSON object in the response
-            json_start = content.find('{')
-            json_end = content.rfind('}') + 1
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
             
             if json_start >= 0 and json_end > json_start:
-                json_str = content[json_start:json_end]
+                json_str = response[json_start:json_end]
                 extracted_info = json.loads(json_str)
                 
                 # Ensure all required fields are present
@@ -694,7 +772,7 @@ RESUME TEXT:
             else:
                 raise ValueError("No JSON object found in response")
         except Exception as e:
-            print(f"Error parsing GPT response: {e}")
+            print(f"Error parsing Gemini response: {e}")
             return {
                 'name': 'Unknown',
                 'email': '',

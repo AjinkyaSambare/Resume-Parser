@@ -1,209 +1,415 @@
-import os
 import streamlit as st
-import pandas as pd
-import time
-import requests
-import json
-from utils.file_handler import save_uploaded_files, get_text_from_file
-from utils.export import export_to_excel
-from utils.secrets_manager import SecretsManager
-from utils.azure_openai import AzureOpenAIProcessor
+from utils.file_handler import save_uploaded_files
+from components.initialization import initialize_app_state, check_api_configuration
+from components.processor import initialize_processor, process_resumes, update_processing_status
+from components.results import display_results
+from components.filter import filter_resumes_with_nlp, simple_keyword_filter
+import os
 
-# Set page configuration
+# Initialize app state
+secrets_manager = initialize_app_state()
+
+# Configure page settings
 st.set_page_config(
-    page_title="Resume Matcher",
+    page_title="ResumeParser",
     page_icon="📄",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# Initialize secrets manager
-secrets_manager = SecretsManager()
-
-# Initialize session state for storing data
-if 'resume_data' not in st.session_state:
-    st.session_state.resume_data = []
-if 'matches' not in st.session_state:
-    st.session_state.matches = []
-if 'azure_processor' not in st.session_state:
-    st.session_state.azure_processor = None
-if 'azure_configured' not in st.session_state:
-    st.session_state.azure_configured = secrets_manager.has_secrets()
-if 'batch_size' not in st.session_state:
-    st.session_state.batch_size = 5
-if 'processing_files' not in st.session_state:
-    st.session_state.processing_files = {}
-if 'processing_complete' not in st.session_state:
-    st.session_state.processing_complete = False
-
-# Initialize persistent display columns for results
-if 'display_columns' not in st.session_state:
-    st.session_state.display_columns = ['filename', 'name', 'email', 'phone', 'education', 'experience', 'skills', 'match_score']
-
-# App title and description
-st.title("Resume Matcher")
+# Custom CSS for styling - Updated for modern UI
 st.markdown("""
-This app helps you find the perfect candidates from your resume collection. 
-Simply upload resumes, describe what you're looking for, and let AI do the rest.
-""")
+<style>
+    /* Global styles */
+    body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        background-color: #ffffff;
+        color: #333333;
+    }
+    
+    /* Main container */
+    .main-container {
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 2rem 1rem;
+    }
+    
+    /* Header styles */
+    .logo-container {
+        text-align: center;
+        margin-bottom: 0.5rem;
+    }
+    
+    .main-title {
+        text-align: center;
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+        color: #1a1a1a;
+    }
+    
+    .subtitle {
+        text-align: center;
+        color: #666666;
+        font-size: 1rem;
+        margin-bottom: 2rem;
+    }
+    
+    /* Action labels (top non-functional elements) */
+    .action-labels {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 2rem;
+        padding: 0 1rem;
+    }
+    
+    .label-item {
+        display: flex;
+        align-items: center;
+        padding: 0.75rem 1.5rem;
+        background-color: #fafafa;
+        border-radius: 50px;
+        font-weight: 500;
+        color: #333333;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    
+    .label-icon {
+        margin-right: 0.5rem;
+    }
+    
+    /* Upload section */
+    .upload-section {
+        border: 2px dashed #e0e0e0;
+        border-radius: 10px;
+        padding: 2.5rem;
+        margin-bottom: 1.5rem;
+        text-align: center;
+        background-color: #fafafa;
+    }
+    
+    .upload-icon {
+        font-size: 2rem;
+        margin-bottom: 1rem;
+        color: #888888;
+    }
+    
+    .upload-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #333333;
+    }
+    
+    .upload-subtitle {
+        color: #666666;
+        margin-bottom: 1rem;
+    }
+    
+    .file-types {
+        color: #888888;
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+    }
+    
+    /* Divider */
+    .divider {
+        display: flex;
+        align-items: center;
+        text-align: center;
+        margin: 1.5rem 0;
+        color: #888888;
+    }
+    
+    .divider::before,
+    .divider::after {
+        content: '';
+        flex: 1;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .divider-text {
+        padding: 0 1rem;
+    }
+    
+    /* Sample button */
+    .sample-button {
+        width: 100%;
+        padding: 0.75rem;
+        background-color: #fafafa;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        font-weight: 500;
+        color: #555555;
+    }
+    
+    /* Filter input */
+    .filter-container {
+        margin-top: 1.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .filter-input {
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        padding: 0.75rem 1rem;
+        width: 100%;
+        font-size: 1rem;
+    }
+    
+    .filter-hint {
+        color: #888888;
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+    }
+    
+    /* Results section */
+    .results-container {
+        margin-top: 2rem;
+    }
+    
+    .results-header-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding: 0;
+    }
+    
+    .results-title {
+        font-size: 2rem;
+        font-weight: 600;
+        margin: 0;
+        color: #1a1a1a;
+    }
+    
+    .results-export-button {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 8px 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 500;
+        color: #495057;
+    }
+    
+    /* Data table container */
+    .data-table-container {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 2rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    
+    /* Button styles */
+    .custom-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1.25rem;
+        background-color: #f5f5f5;
+        border: 1px solid #e0e0e0;
+        border-radius: 50px;
+        font-weight: 500;
+        color: #333333;
+        text-decoration: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .custom-button:hover {
+        background-color: #eeeeee;
+    }
+    
+    .custom-button.primary {
+        background-color: #4F46E5;
+        color: white;
+        border: none;
+    }
+    
+    .custom-button.primary:hover {
+        background-color: #4338CA;
+    }
+    
+    /* Hide Streamlit components */
+    #MainMenu, footer, header {
+        visibility: hidden;
+    }
+    
+    /* Override Streamlit styles */
+    .stApp {
+        max-width: 100%;
+    }
+    
+    .block-container {
+        max-width: 1000px;
+        padding-top: 1rem;
+        padding-right: 1rem;
+        padding-left: 1rem;
+        padding-bottom: 1rem;
+    }
+    
+    /* Make file uploader cleaner */
+    .stFileUploader > div > button {
+        display: none;
+    }
+    
+    .uploadedFile {
+        display: none;
+    }
+    
+    /* Input field styling */
+    .stTextInput > div > div {
+        background-color: white;
+        border-radius: 8px;
+    }
+    
+    /* Style the table */
+    .stDataFrame {
+        border: none !important;
+    }
+    
+    /* Fix for button styling */
+    .stButton > button {
+        border-radius: 4px;
+        font-weight: 500;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Check Azure API configuration
-if not st.session_state.azure_configured:
-    st.error("""
-    ⚠️ Azure OpenAI API is not configured. 
-    Please add your API credentials in the .streamlit/secrets.toml file.
-    """)
+# Main container
+st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
-# Main layout with two columns
-col1, col2 = st.columns([3, 1])
+# Logo and title section
+st.markdown('<div class="logo-container"><span style="font-size: 2.5rem;"></span></div>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">ResumeParser</h1>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Upload, filter, and analyze resumes with natural language processing</p>', unsafe_allow_html=True)
 
-with col2:
-    # Batch size is fixed at 5 per API requirements
-    st.session_state.batch_size = 5
-
+# Top section labels (non-functional)
+st.markdown('<div class="action-labels">', unsafe_allow_html=True)
+col1, col2 = st.columns([1, 1])
 with col1:
-    # Single input source with tabs for upload and future email fetching
-    tab1, tab2 = st.tabs(["Upload Resumes", "Email Fetching (Coming Soon)"])
-    
-    with tab1:
-        uploaded_files = st.file_uploader(
-            "Upload Resumes", 
-            accept_multiple_files=True,
-            type=['pdf', 'docx', 'txt']
-        )
-    
-    with tab2:
-        st.info("Email fetching will be available in a future update.")
-        
-    # Natural language criteria input
-    criteria_text = st.text_area(
-        "What kind of candidates are you looking for?",
-        placeholder="Example: I need Python developers with at least 3 years of experience in finance who know AWS and have a Bachelor's degree",
-        height=100
-    )
-    
-    # One-click processing button
-    process_button = st.button("Find Matching Candidates", type="primary")
+    st.markdown('<div class="label-item"><span class="label-icon">🔍</span> Filter with natural language</div>', unsafe_allow_html=True)
+with col2:
+    st.markdown('<div class="label-item"><span class="label-icon">⬇️</span> Export to Excel</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-# Processing logic
-if process_button and uploaded_files and criteria_text:
-    with st.spinner("Processing resumes and finding matches..."):
-        # Create necessary directories
-        os.makedirs('data/uploads', exist_ok=True)
-        os.makedirs('data/processed', exist_ok=True)
-        
-        # Save uploaded files
-        file_paths = save_uploaded_files(uploaded_files)
-        
-        # Initialize Azure OpenAI processor if needed
-        if st.session_state.azure_processor is None:
-            if st.session_state.azure_configured:
-                try:
-                    azure_endpoint = secrets_manager.get_secret('endpoint')
-                    azure_api_key = secrets_manager.get_secret('api_key')
-                    st.session_state.azure_processor = AzureOpenAIProcessor(azure_endpoint, azure_api_key)
-                except Exception as e:
-                    st.error(f"Error initializing Azure OpenAI: {e}")
-                    st.stop()
+# Upload section
+st.markdown('<div class="">', unsafe_allow_html=True)
+st.markdown('<div class="upload-icon"></div>', unsafe_allow_html=True)
+st.markdown('<h3 class="upload-title">Upload your resumes</h3>', unsafe_allow_html=True)
+st.markdown('<p class="upload-subtitle">Drag & drop your files here or click to browse</p>', unsafe_allow_html=True)
+
+uploaded_files = st.file_uploader(
+    label="Upload resumes",
+    accept_multiple_files=True,
+    type=['pdf', 'doc', 'docx', 'txt'],
+    label_visibility="collapsed"
+)
+
+st.markdown('<p class="file-types">Supports PDF, DOC, DOCX, TXT</p>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# OR Divider
+st.markdown('<div class="divider"><span class="divider-text">OR</span></div>', unsafe_allow_html=True)
+
+# Sample resumes button
+sample_clicked = st.button("📋 Load sample resumes", use_container_width=True, key="sample_btn")
+
+# Filter input
+st.markdown('<div class="filter-container">', unsafe_allow_html=True)
+query = st.text_input(
+    "Filter resumes with natural language...",
+    placeholder="(e.g., 'React developers with 3+ years experience')",
+)
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.markdown('', unsafe_allow_html=True)
+with col2:
+    filter_button = st.button("🔍 Filter with natural language", key="filter_btn", help="Process and filter uploaded resumes")
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Clear filtered results if query is cleared
+if not query and 'filtered_matches' in st.session_state:
+    del st.session_state.filtered_matches
+
+# Process Files Logic
+if uploaded_files:
+    if 'pending_files' not in st.session_state:
+        st.session_state.pending_files = []
+    
+    # Store references to files but don't process them yet
+    for file in uploaded_files:
+        if file.name not in st.session_state.pending_files:
+            st.session_state.pending_files.append(file.name)
+    
+    # Show message about using filters
+    if not query:
+        st.info(f"📝 {len(uploaded_files)} files ready. Enter filtering criteria above and click 'Filter with natural language' to process.")
+
+# Sample data loading
+if sample_clicked:
+    try:
+        # Check if we have a samples directory
+        sample_dir = os.path.join("data", "samples")
+        if not os.path.exists(sample_dir):
+            os.makedirs(sample_dir, exist_ok=True)
+            st.warning("Sample directory created but no sample files found. Please add some files to the data/samples directory.")
+        else:
+            sample_files = [f for f in os.listdir(sample_dir) if f.endswith(('.pdf', '.docx', '.doc', '.txt'))]
+            if sample_files:
+                # Add sample files to pending_files instead of processing them immediately
+                if 'pending_files' not in st.session_state:
+                    st.session_state.pending_files = []
+                
+                for file in sample_files:
+                    if file not in st.session_state.pending_files:
+                        st.session_state.pending_files.append(file)
+                
+                # Store sample file paths for later processing
+                st.session_state.sample_file_paths = [os.path.join(sample_dir, f) for f in sample_files]
+                
+                # Inform user about next steps
+                st.success(f"Loaded {len(sample_files)} sample resumes")
+                st.info("Enter filtering criteria above and click 'Filter with natural language' to search through the sample resumes.")
             else:
-                st.error("Azure OpenAI API is required but not configured.")
-                st.stop()
+                st.warning("No sample files found. Please add some files to the data/samples directory.")
+    except Exception as e:
+        st.error(f"Error loading sample files: {e}")
+
+# Apply filtering if requested
+if filter_button and query:
+    try:
+        files_to_process = False
+        file_paths = []
         
-        # Parse the criteria text into structured filters
-        try:
-            criteria_prompt = f"""
-            Convert this job requirement into structured criteria:
-            
-            {criteria_text}
-            
-            Return as JSON with these fields:
-            - required_skills: Array of skills mentioned
-            - min_experience: Number (years)
-            - education_level: Education level ("Any", "High School", "Bachelor's", "Master's", "PhD")
-            - location: Location requirement (if any)
-            - other_requirements: Array of other requirements
-            """
-            
-            custom_headers = {
-                "Content-Type": "application/json",
-                "api-key": secrets_manager.get_secret('api_key')
-            }
-            
-            custom_data = {
-                "messages": [
-                    {"role": "system", "content": "You are an expert at converting job requirements into structured criteria."},
-                    {"role": "user", "content": criteria_prompt}
-                ],
-                "max_tokens": 500,
-                "temperature": 0.0,
-                "response_format": {"type": "json_object"}
-            }
-            
-            try:
-                response = requests.post(
-                    secrets_manager.get_secret('endpoint'),
-                    headers=custom_headers,
-                    json=custom_data,
-                    timeout=30
-                )
+        # Check if we need to process uploaded files
+        if uploaded_files and 'pending_files' in st.session_state and st.session_state.pending_files:
+            file_paths.extend(save_uploaded_files(uploaded_files))
+            files_to_process = True
+        
+        # Check if we need to process sample files
+        if 'sample_file_paths' in st.session_state and st.session_state.sample_file_paths:
+            file_paths.extend(st.session_state.sample_file_paths)
+            # Clear sample file paths to avoid duplicate processing
+            st.session_state.sample_file_paths = []
+            files_to_process = True
+        
+        # Process files if needed
+        if files_to_process:
+            with st.spinner("Processing resumes before filtering..."):
+                processor = initialize_processor(secrets_manager)
                 
-                # Add retry logic for rate limiting
-                retry_count = 0
-                max_retries = 3
-                
-                while response.status_code == 429 and retry_count < max_retries:
-                    wait_time = (2 ** retry_count) * 5  # Exponential backoff
-                    st.warning(f"Rate limit reached. Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                    
-                    response = requests.post(
-                        secrets_manager.get_secret('endpoint'),
-                        headers=custom_headers,
-                        json=custom_data,
-                        timeout=30
-                    )
-                    retry_count += 1
-                
-                if response.status_code == 200:
-                    structured_filters = json.loads(response.json()['choices'][0]['message']['content'])
-                    
-                    # Create a more readable version of the filters
-                    filter_description = "Looking for candidates with:\n"
-                    if structured_filters.get('required_skills'):
-                        filter_description += f"- Skills: {', '.join(structured_filters['required_skills'])}\n"
-                    if structured_filters.get('min_experience'):
-                        filter_description += f"- Experience: {structured_filters['min_experience']}+ years\n"
-                    if structured_filters.get('education_level') and structured_filters['education_level'] != "Any":
-                        filter_description += f"- Education: {structured_filters['education_level']} degree\n"
-                    if structured_filters.get('location'):
-                        filter_description += f"- Location: {structured_filters['location']}\n"
-                    if structured_filters.get('other_requirements'):
-                        filter_description += f"- Other: {', '.join(structured_filters['other_requirements'])}\n"
-                    
-                    # Display the criteria to the user
-                    st.info(filter_description)
-                    
-                    # Format for API
-                    user_filters = {
-                        'skills': structured_filters.get('required_skills', []),
-                        'min_experience': int(structured_filters.get('min_experience', 0)) if structured_filters.get('min_experience') is not None else 0,
-                        'education_level': structured_filters.get('education_level', "Any"),
-                        'location': structured_filters.get('location', ""),
-                        'custom_filters': {}
-                    }
-                    
-                    # Save filters to session state for later use
-                    st.session_state.user_filters = user_filters
-                else:
-                    st.error(f"Error processing criteria: API returned status code {response.status_code}")
-                    user_filters = {
-                        'skills': [],
-                        'min_experience': 0,
-                        'education_level': "Any",
-                        'location': "",
-                        'custom_filters': {}
-                    }
-            except Exception as e:
-                st.error(f"Error calling Azure OpenAI API: {e}")
+                # Default filters initially
                 user_filters = {
                     'skills': [],
                     'min_experience': 0,
@@ -211,337 +417,103 @@ if process_button and uploaded_files and criteria_text:
                     'location': "",
                     'custom_filters': {}
                 }
-        except Exception as e:
-            st.error(f"Error processing criteria: {e}")
-            user_filters = {
-                'skills': [],
-                'min_experience': 0,
-                'education_level': "Any",
-                'location': "",
-                'custom_filters': {}
-            }
-        
-        # Process files with the structured criteria context
-        azure_processor = st.session_state.azure_processor
-        total_files = len(file_paths)
-        batch_size = st.session_state.batch_size
-        
-        # Set up progress tracking
-        status_container = st.empty()
-        progress_bar = st.progress(0)
-        file_status = st.empty()
-        
-        status_container.info(f"Processing {total_files} resumes...")
-        
-        # Reset session data
-        st.session_state.processing_complete = False
-        st.session_state.processing_files = {}
-        st.session_state.resume_data = []
-        
-        # Process files in batches
-        for i in range(0, total_files, batch_size):
-            batch = file_paths[i:i+batch_size]
-            
-            # Queue batch for processing
-            task_ids = []
-            for file_path in batch:
-                file_name = os.path.basename(file_path)
-                task_id = azure_processor.queue_document_for_analysis(file_path, user_filters)
-                task_ids.append(task_id)
-                st.session_state.processing_files[task_id] = {
-                    "file_path": file_path,
-                    "file_name": file_name,
-                    "status": "queued"
-                }
-            
-            # Monitor batch progress
-            batch_complete = False
-            while not batch_complete:
-                # Check task statuses
-                for task_id in task_ids:
-                    result = azure_processor.get_queued_result(task_id)
-                    
-                    if result["status"] == "completed":
-                        if st.session_state.processing_files[task_id]["status"] != "complete":
-                            st.session_state.processing_files[task_id]["status"] = "complete"
-                            if result["data"]:
-                                st.session_state.resume_data.append(result["data"])
-                    elif result["status"] == "failed":
-                        st.session_state.processing_files[task_id]["status"] = "error"
-                        st.session_state.processing_files[task_id]["error"] = result["error"]
                 
-                # Update progress
-                completed = sum(1 for task in st.session_state.processing_files.values() 
-                              if task["status"] in ["complete", "error"])
-                progress = completed / total_files
-                progress_bar.progress(progress, text=f"Processed {completed}/{total_files} resumes")
+                st.session_state.user_filters = user_filters
+                process_resumes(file_paths, user_filters, processor)
                 
-                # Update status text
-                status_text = ""
-                for task_id in task_ids:
-                    task = st.session_state.processing_files[task_id]
-                    icon = "⏳" if task["status"] == "queued" else "✅" if task["status"] == "complete" else "❌"
-                    status_text += f"{icon} {task['file_name']}: {task['status'].upper()}\n"
-                file_status.code(status_text)
-                
-                # Check if batch is complete
-                batch_complete = all(st.session_state.processing_files[task_id]["status"] in ["complete", "error"] 
-                                  for task_id in task_ids)
-                
-                # Wait before checking again
-                if not batch_complete:
-                    time.sleep(1)
+                # Mark files as processed
+                st.session_state.pending_files = []
+                if 'processed_files' not in st.session_state:
+                    st.session_state.processed_files = []
+                if uploaded_files:
+                    st.session_state.processed_files.extend([file.name for file in uploaded_files])
         
-        # All processing complete
-        st.session_state.processing_complete = True
-        
-        # Final status
-        completed = sum(1 for task in st.session_state.processing_files.values() 
-                      if task["status"] == "complete")
-        errors = sum(1 for task in st.session_state.processing_files.values() 
-                   if task["status"] == "error")
-        
-        progress_bar.progress(1.0, text="Processing complete!")
-        
-        if errors > 0:
-            status_container.warning(f"Processed {completed}/{total_files} resumes. {errors} had errors.")
-        else:
-            status_container.success(f"Successfully processed all {total_files} resumes!")
-        
-        # Filter processed resumes to show only those that match the criteria
-        from utils.filters import filter_resumes
-        st.session_state.matches = filter_resumes(
-            st.session_state.resume_data,
-            skills=st.session_state.user_filters.get('skills', []),
-            min_experience=st.session_state.user_filters.get('min_experience', 0),
-            education_level=st.session_state.user_filters.get('education_level', 'Any'),
-            location=st.session_state.user_filters.get('location', ''),
-            custom_filters=st.session_state.user_filters.get('custom_filters', {})
-        )
-        
-        # Sort matches by match score (descending)
-        st.session_state.matches.sort(key=lambda x: x.get('match_score', 0), reverse=True)
-
-# Processing status indicators
-elif process_button and not uploaded_files:
-    st.warning("Please upload at least one resume file.")
-elif process_button and not criteria_text:
-    st.warning("Please describe what kind of candidates you're looking for.")
-
-# Check for processing in progress
-if 'processing_files' in st.session_state and st.session_state.processing_files and not st.session_state.processing_complete:
-    # Calculate progress
-    azure_processor = st.session_state.azure_processor
-    if azure_processor:
-        # Update statuses
-        task_statuses = azure_processor.get_all_task_statuses()
-        
-        for task_id, status in task_statuses.items():
-            if task_id in st.session_state.processing_files:
-                prev_status = st.session_state.processing_files[task_id]["status"]
-                if status == "completed" and prev_status != "complete":
-                    result = azure_processor.get_queued_result(task_id)
-                    st.session_state.processing_files[task_id]["status"] = "complete"
-                    if result["data"] and result["data"] not in st.session_state.resume_data:
-                        st.session_state.resume_data.append(result["data"])
-                elif status == "failed" and prev_status != "error":
-                    result = azure_processor.get_queued_result(task_id)
-                    st.session_state.processing_files[task_id]["status"] = "error"
-                    st.session_state.processing_files[task_id]["error"] = result.get("error", "Unknown error")
-    
-    # Show progress
-    total_files = len(st.session_state.processing_files)
-    completed = sum(1 for task in st.session_state.processing_files.values() 
-                  if task["status"] in ["complete", "error"])
-    progress = completed / total_files if total_files > 0 else 0
-    
-    st.info(f"Resume processing in progress: {completed}/{total_files} complete")
-    st.progress(progress)
-    
-    # Status of each file
-    status_text = ""
-    for task_id, task in st.session_state.processing_files.items():
-        icon = "⏳" if task["status"] == "queued" else "✅" if task["status"] == "complete" else "❌"
-        status_text += f"{icon} {task['file_name']}: {task['status'].upper()}\n"
-    st.code(status_text)
-    
-    # Mark as complete if all done
-    if completed == total_files:
-        st.session_state.processing_complete = True
-        st.success("Processing complete!")
-        
-        # Apply filters to show only matching resumes
-        if 'user_filters' in st.session_state:
-            filters_to_use = st.session_state.user_filters
-        else:
-            # If user_filters isn't available in session state,
-            # use empty filters as fallback
-            filters_to_use = {
-                'skills': [],
-                'min_experience': 0,
-                'education_level': 'Any',
-                'location': '',
-                'custom_filters': {}
-            }
-            
-        from utils.filters import filter_resumes
-        st.session_state.matches = filter_resumes(
-            st.session_state.resume_data,
-            skills=filters_to_use.get('skills', []),
-            min_experience=filters_to_use.get('min_experience', 0),
-            education_level=filters_to_use.get('education_level', 'Any'),
-            location=filters_to_use.get('location', ''),
-            custom_filters=filters_to_use.get('custom_filters', {})
-        )
-        
-        st.session_state.matches.sort(key=lambda x: x.get('match_score', 0), reverse=True)
-    
-    # Add refresh button
-    if st.button("Refresh Status"):
-        st.rerun()
-
-# Results section
-if 'matches' in st.session_state and st.session_state.matches:
-    st.header("Matching Candidates")
-    
-    # Convert matches to DataFrame and ensure all persistent display columns exist
-    df = pd.DataFrame(st.session_state.matches)
-    for col in st.session_state.display_columns:
-        if col not in df.columns:
-            df[col] = ""
-    
-    # Custom column addition
-    with st.expander("Add Custom Information"):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            new_column = st.text_input("What information would you like to extract?", 
-                                     placeholder="e.g., Years of Python experience")
-        with col2:
-            add_column_button = st.button("Add Column")
-    
-        if add_column_button and new_column:
-            with st.spinner(f"Extracting {new_column}..."):
-                # Process new column for each resume
-                azure_processor = st.session_state.azure_processor
-                
-                for resume in st.session_state.matches:
-                    file_path = resume.get('file_path', "")
-                    try:
-                        # Get resume text
-                        text = get_text_from_file(file_path)
-                        
-                        # Create extraction prompt
-                        custom_prompt = f"""You are extracting specific information from a resume.
-
-TASK: {new_column}
-
-Resume text:
-{text[:7000]}
-
-Provide ONLY the requested information as plain text. Be precise and thorough.
-If the information cannot be found, state "Not found in resume".
-Do not include explanations, analysis, or any additional text."""
-                        
-                        try:
-                            custom_headers = {
-                                "Content-Type": "application/json",
-                                "api-key": secrets_manager.get_secret('api_key')
-                            }
-                            
-                            custom_data = {
-                                "messages": [
-                                    {"role": "system", "content": "You are an expert resume analyzer."},
-                                    {"role": "user", "content": custom_prompt}
-                                ],
-                                "max_tokens": 500,
-                                "temperature": 0.0
-                            }
-                            
-                            max_retries = 3
-                            for attempt in range(max_retries):
-                                try:
-                                    response = requests.post(
-                                        secrets_manager.get_secret('endpoint'),
-                                        headers=custom_headers,
-                                        json=custom_data,
-                                        timeout=30
-                                    )
-                                    
-                                    if response.status_code == 200:
-                                        result = response.json()['choices'][0]['message']['content'].strip()
-                                        resume[new_column] = result
-                                        break
-                                    elif response.status_code == 429:  # Rate limit
-                                        wait_time = (2 ** attempt) * 5  # Exponential backoff
-                                        time.sleep(wait_time)
-                                        if attempt == max_retries - 1:
-                                            resume[new_column] = f"Rate limit exceeded: {response.status_code}"
-                                    else:
-                                        resume[new_column] = f"Error: API returned status code {response.status_code}"
-                                        break
-                                except Exception as e:
-                                    if attempt == max_retries - 1:
-                                        resume[new_column] = f"Error: {str(e)[:50]}"
-                                    time.sleep(5)
-                        except Exception as e:
-                            resume[new_column] = f"Error: {str(e)[:50]}"
-                    except Exception as e:
-                        resume[new_column] = f"Error processing: {str(e)[:50]}"
-                
-                # Update persistent display columns and recreate DataFrame
-                if new_column not in st.session_state.display_columns:
-                    st.session_state.display_columns.append(new_column)
-                df = pd.DataFrame(st.session_state.matches)
-                st.success(f"Added column: {new_column}")
-                st.rerun()
-    
-    # Display results table
-    st.dataframe(df[st.session_state.display_columns], use_container_width=True)
-    
-    # Match scores visualization
-    if 'match_score' in df.columns and df['match_score'].sum() > 0:
-        st.subheader("Match Score Analysis")
-        
-        import plotly.express as px
-        match_scores = df[['name', 'match_score']].sort_values('match_score', ascending=False)
-        fig = px.bar(
-            match_scores, 
-            x='name', 
-            y='match_score',
-            title="Candidate Match Scores",
-            labels={'match_score': 'Match Score (%)', 'name': 'Candidate'},
-            color='match_score',
-            color_continuous_scale='Viridis',
-            range_color=[0, 100]
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Match reasons for top candidates
-        st.subheader("Why These Candidates Match")
-        
-        for idx, row in df.sort_values('match_score', ascending=False).head(3).iterrows():
-            if row['match_score'] > 0:
-                with st.expander(f"{row['name']} - Match Score: {row['match_score']}%"):
-                    if 'match_reasons_text' in row and row['match_reasons_text']:
-                        st.markdown(row['match_reasons_text'])
+        # Now apply filters if we have processed resumes
+        if 'matches' in st.session_state and st.session_state.matches:
+            with st.spinner("Filtering resumes..."):
+                processor = st.session_state.gemini_processor if 'gemini_processor' in st.session_state and st.session_state.gemini_processor is not None else None
+                try:
+                    # First try with AI-based filtering
+                    if processor:
+                        filtered_results = filter_resumes_with_nlp(query, processor, st.session_state.matches)
+                        st.session_state.filtered_matches = filtered_results
+                        st.success(f"Found {len(filtered_results)} matching resumes")
                     else:
-                        st.info("No detailed match information available")
+                        # Fallback to simple keyword filtering
+                        st.warning("AI processor not available. Using basic keyword filtering.")
+                        filtered_results = simple_keyword_filter(query, st.session_state.matches)
+                        st.session_state.filtered_matches = filtered_results
+                        st.success(f"Found {len(filtered_results)} matching resumes with basic filtering")
+                except Exception as e:
+                    # Handle any exceptions during filtering
+                    st.error(f"Error during advanced filtering: {str(e)}")
+                    st.warning("Falling back to basic keyword search...")
+                    filtered_results = simple_keyword_filter(query, st.session_state.matches)
+                    st.session_state.filtered_matches = filtered_results
+                    if filtered_results:
+                        st.success(f"Found {len(filtered_results)} matching resumes with basic filtering")
+                    else:
+                        st.warning("No matching resumes found")
+        else:
+            st.warning("No resumes have been processed yet. Please upload resumes and try again.")
+    except Exception as e:
+        st.error(f"Error filtering resumes: {e}")
+
+# Results section with export button
+if 'filtered_matches' in st.session_state and st.session_state.filtered_matches:
+    # Results header with export button - Outside the results container
+    st.markdown('<div class="results-container">', unsafe_allow_html=True)
+    st.markdown('<div class="results-header-container">', unsafe_allow_html=True)
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.markdown('<h2 class="results-title">Results</h2>', unsafe_allow_html=True)
+    with col2:
+        export_button = st.button(" Export to Excel", key="export_btn", help="Export filtered results to Excel")
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Data table in its own container
+    st.markdown('<div class="data-table-container">', unsafe_allow_html=True)
+    # Temporarily swap the matches with filtered matches for display
+    original_matches = st.session_state.matches
+    st.session_state.matches = st.session_state.filtered_matches
+    display_results()
+    # Restore original matches
+    st.session_state.matches = original_matches
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Export functionality
-    st.subheader("Export Results")
-    try:
-        excel_data = export_to_excel(df[st.session_state.display_columns])
-        if st.download_button(
-            label="Export to Excel",
-            data=excel_data,
-            file_name="matching_candidates.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        ):
-            st.success("Export successful!")
-    except Exception as e:
-        st.error(f"Error exporting to Excel: {e}")
+    if export_button:
+        data_to_export = st.session_state.filtered_matches
+        if data_to_export:
+            try:
+                from utils.export import export_to_excel
+                import pandas as pd
+                
+                df = pd.DataFrame(data_to_export)
+                columns_to_export = st.session_state.display_columns if 'display_columns' in st.session_state else df.columns
+                
+                excel_data = export_to_excel(df[columns_to_export])
+                st.download_button(
+                    label="Download Excel File",
+                    data=excel_data,
+                    file_name="parsed_resumes.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                st.success("Excel file ready for download!")
+            except Exception as e:
+                st.error(f"Error exporting data: {e}")
+        else:
+            st.warning("No resume data available to export. Please upload and filter resumes first.")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+elif query and filter_button and not st.session_state.get('filtered_matches', []):
+    # We tried filtering but didn't find any matches
+    st.markdown('<div class="results-container">', unsafe_allow_html=True)
+    st.warning(f"No resumes found matching '{query}'")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# No data state
-if not uploaded_files and not st.session_state.resume_data:
-    st.info("Please upload resume files and describe what kind of candidates you're looking for to get started.")
+# Check API configuration in background
+check_api_configuration()
+
+# Close main container
+st.markdown('</div>', unsafe_allow_html=True)
