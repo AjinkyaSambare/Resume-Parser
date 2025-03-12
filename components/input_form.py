@@ -23,7 +23,7 @@ def render_sample_data_button():
     Returns:
         bool: True if the button was clicked
     """
-    load_samples = st.button("📄 Load sample resumes", use_container_width=True)
+    load_samples = st.button(" Load sample resumes", use_container_width=True)
     
     if load_samples:
         # Logic to load sample resumes
@@ -58,9 +58,9 @@ def render_filter_section():
     
     col1, col2 = st.columns(2)
     with col1:
-        filter_button = st.button("🔍 Filter with natural language", use_container_width=True)
+        filter_button = st.button(" Filter with natural language", use_container_width=True)
     with col2:
-        export_button = st.button("⬇️ Export to Excel", use_container_width=True)
+        export_button = st.button(" Export to Excel", use_container_width=True)
     
     # Suggested filter queries
     st.markdown(

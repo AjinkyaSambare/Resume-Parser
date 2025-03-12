@@ -11,7 +11,7 @@ secrets_manager = initialize_app_state()
 
 # Configure page settings
 st.set_page_config(
-    page_title="ResumeParser",
+    page_title="Filter Resumes",
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -291,16 +291,16 @@ st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
 # Logo and title section
 st.markdown('<div class="logo-container"><span style="font-size: 2.5rem;"></span></div>', unsafe_allow_html=True)
-st.markdown('<h1 class="main-title">ResumeParser</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">Filter Resumes</h1>', unsafe_allow_html=True)
 st.markdown('<p class="subtitle">Upload, filter, and analyze resumes with natural language processing</p>', unsafe_allow_html=True)
 
 # Top section labels (non-functional)
 st.markdown('<div class="action-labels">', unsafe_allow_html=True)
 col1, col2 = st.columns([1, 1])
 with col1:
-    st.markdown('<div class="label-item"><span class="label-icon">🔍</span> Filter with natural language</div>', unsafe_allow_html=True)
+    st.markdown('<div class="label-item"><span class="label-icon">⌕</span> Filter with natural language</div>', unsafe_allow_html=True)
 with col2:
-    st.markdown('<div class="label-item"><span class="label-icon">⬇️</span> Export to Excel</div>', unsafe_allow_html=True)
+    st.markdown('<div class="label-item"><span class="label-icon">⬇</span> Export to Excel</div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # Upload section
@@ -323,7 +323,22 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.markdown('<div class="divider"><span class="divider-text">OR</span></div>', unsafe_allow_html=True)
 
 # Sample resumes button
-sample_clicked = st.button("📋 Load sample resumes", use_container_width=True, key="sample_btn")
+sample_clicked = st.button("⬆ Load Sample Resumes", 
+    use_container_width=True, 
+    key="sample_btn", 
+    help="Click to load pre-existing sample resume files"
+)
+
+# Add custom CSS to increase padding for the sample resumes button
+st.markdown("""
+<style>
+div[data-testid="stButton"] button {
+    height: 60px !important;
+    padding: 10px 30px !important;
+    font-size: 1rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Filter input
 st.markdown('<div class="filter-container">', unsafe_allow_html=True)
@@ -331,12 +346,11 @@ query = st.text_input(
     "Filter resumes with natural language...",
     placeholder="(e.g., 'React developers with 3+ years experience')",
 )
-col1, col2 = st.columns([3, 1])
+col1, col2 = st.columns([1, 3])
 with col1:
-    st.markdown('', unsafe_allow_html=True)
-with col2:
-    filter_button = st.button("🔍 Filter with natural language", key="filter_btn", help="Process and filter uploaded resumes")
+    filter_button = st.button("⌕ Filter Resumes", key="filter_btn", help="Process and filter uploaded resumes")
 st.markdown('</div>', unsafe_allow_html=True)
+
 
 # Clear filtered results if query is cleared
 if not query and 'filtered_matches' in st.session_state:
@@ -354,7 +368,7 @@ if uploaded_files:
     
     # Show message about using filters
     if not query:
-        st.info(f"📝 {len(uploaded_files)} files ready. Enter filtering criteria above and click 'Filter with natural language' to process.")
+        st.info(f"📝 {len(uploaded_files)} files ready. Enter filtering criteria above and click 'Filter Resumes' to process.")
 
 # Sample data loading
 if sample_clicked:
@@ -380,7 +394,7 @@ if sample_clicked:
                 
                 # Inform user about next steps
                 st.success(f"Loaded {len(sample_files)} sample resumes")
-                st.info("Enter filtering criteria above and click 'Filter with natural language' to search through the sample resumes.")
+                st.info("Enter filtering criteria above and click 'Filter Resumes' to search through the sample resumes.")
             else:
                 st.warning("No sample files found. Please add some files to the data/samples directory.")
     except Exception as e:
@@ -461,29 +475,54 @@ if filter_button and query:
 
 # Results section with export button
 if 'filtered_matches' in st.session_state and st.session_state.filtered_matches:
-    # Results header with export button - Outside the results container
+    # Results container
     st.markdown('<div class="results-container">', unsafe_allow_html=True)
+    
+    # Results header without export button
     st.markdown('<div class="results-header-container">', unsafe_allow_html=True)
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.markdown('<h2 class="results-title">Results</h2>', unsafe_allow_html=True)
-    with col2:
-        export_button = st.button(" Export to Excel", key="export_btn", help="Export filtered results to Excel")
+    st.markdown('<h2 class="results-title">Results</h2>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Data table in its own container
     st.markdown('<div class="data-table-container">', unsafe_allow_html=True)
+    
     # Temporarily swap the matches with filtered matches for display
     original_matches = st.session_state.matches
     st.session_state.matches = st.session_state.filtered_matches
     display_results()
+    
     # Restore original matches
     st.session_state.matches = original_matches
     st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Export button at the bottom of the page with custom styling
+    export_button = st.button(" Export to Excel", 
+        key="export_btn", 
+        help="Export filtered results to Excel", 
+        use_container_width=True
+    )
+    
+    # Add custom CSS for the export button
+    st.markdown("""
+    <style>
+    div[data-testid="stButton"] button[data-testid="stButton-export_btn"] {
+        background-color: rgba(144, 238, 144, 0.2) !important;  /* Light green with transparency */
+        border: 1px solid rgba(144, 238, 144, 0.5) !important;
+        color: #2E8B57 !important;  /* Darker green text for contrast */
+        transition: background-color 0.3s ease !important;
+    }
+    div[data-testid="stButton"] button[data-testid="stButton-export_btn"]:hover {
+        background-color: rgba(144, 238, 144, 0.4) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     # Export functionality
+    # Export functionality for filtered matches
     if export_button:
-        data_to_export = st.session_state.filtered_matches
+        data_to_export = st.session_state.filtered_matches if 'filtered_matches' in st.session_state and st.session_state.filtered_matches else st.session_state.matches if 'matches' in st.session_state else []
+        
         if data_to_export:
             try:
                 from utils.export import export_to_excel
@@ -493,19 +532,20 @@ if 'filtered_matches' in st.session_state and st.session_state.filtered_matches:
                 columns_to_export = st.session_state.display_columns if 'display_columns' in st.session_state else df.columns
                 
                 excel_data = export_to_excel(df[columns_to_export])
+                
+                # Direct download without additional button
                 st.download_button(
-                    label="Download Excel File",
+                    label="Download Excel",
                     data=excel_data,
                     file_name="parsed_resumes.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
                 )
-                st.success("Excel file ready for download!")
             except Exception as e:
                 st.error(f"Error exporting data: {e}")
         else:
             st.warning("No resume data available to export. Please upload and filter resumes first.")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+
 elif query and filter_button and not st.session_state.get('filtered_matches', []):
     # We tried filtering but didn't find any matches
     st.markdown('<div class="results-container">', unsafe_allow_html=True)

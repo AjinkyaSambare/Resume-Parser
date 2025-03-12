@@ -20,17 +20,20 @@ def display_results(export_only=False):
             df[col] = ""
     
     # Custom Column Adder - Restored functionality
-    with st.expander("➕ Add Custom Coloumn Name"):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            new_column = st.text_input("What information would you like to extract?", 
-                                     placeholder="e.g., Years of Python experience")
-        with col2:
-            add_column_button = st.button("Add Column")
-    
-        if add_column_button and new_column:
-            with st.spinner(f"Extracting {new_column}..."):
-                extract_custom_column(new_column)
+    with st.expander("➕ Add Custom Column Name"):
+    # Input field on full width
+        new_column = st.text_input(
+            "What information would you like to extract?",
+            placeholder="e.g., Years of Python experience"
+        )
+        
+        # Add column button
+        add_column_button = st.button("Add Column")
+        
+    # Conditional processing when button is clicked
+    if add_column_button and new_column:
+        with st.spinner(f"Extracting {new_column}..."):
+            extract_custom_column(new_column)
     
     # Display results table with more height to use full screen space
     # Use a container to ensure it respects the margins
