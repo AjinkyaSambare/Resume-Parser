@@ -19,7 +19,7 @@ def display_results(export_only=False):
             df[col] = ""
     
     # Custom Column Adder
-    with st.expander("➕ Add Custom Column Name"):
+    with st.expander("➕ Add Custom Column"):
         # Two separate fields: one for column name and one for the prompt
         column_name = st.text_input(
             "Enter column name:",
