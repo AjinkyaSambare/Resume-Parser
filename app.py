@@ -17,9 +17,69 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for styling - Modern UI
+# Simple light theme CSS - no toggling, just forcing light mode
 st.markdown("""
 <style>
+    /* Force light mode for all Streamlit components */
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], 
+    [data-testid="stToolbar"], [data-testid="stSidebar"], 
+    [data-testid="stSidebarUserContent"], .main .block-container {
+        background-color: white !important;
+        color: #262730 !important;
+    }
+    
+    /* Fix dark mode text colors */
+    body, p, div, h1, h2, h3, h4, h5, h6, span, li, a, button, 
+    input, textarea, label, td, th, tr, thead, tbody {
+        color: #262730 !important;
+    }
+    
+    /* Table and dataframe specific */
+    .stDataFrame, [data-testid="stTable"], table, tr, td, th {
+        color: #262730 !important;
+        background-color: white !important;
+        border-color: #E5E5E5 !important;
+    }
+    
+    /* File uploader specific */
+    [data-testid="stFileUploader"] {
+        background-color: #f0f2f6 !important;
+        color: #262730 !important;
+        border-color: #E5E5E5 !important;
+    }
+    
+    /* Input elements and controls */
+    input, textarea, [data-baseweb="input"], [data-baseweb="textarea"],
+    [data-baseweb="select"], .stTextInput > div > div > input, 
+    .stSelectbox > div > div > div {
+        background-color: white !important;
+        color: #262730 !important;
+        border-color: #CCCCCC !important;
+    }
+    
+    /* Button styling */
+    button, .stButton button {
+        background-color: #F0F2F6 !important;
+        color: #262730 !important;
+        border-color: #E0E0E0 !important;
+    }
+    
+    /* Forcefully override dark mode */
+    @media (prefers-color-scheme: dark) {
+        html {
+            color-scheme: light !important;
+        }
+        
+        body, .stApp {
+            background-color: white !important;
+        }
+        
+        /* Reset dark mode color for text */
+        * {
+            color: #262730 !important;
+        }
+    }
+    
     /* Global styles */
     body {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -234,6 +294,14 @@ st.markdown("""
     
     div[data-testid="stButton"] button[data-testid="stButton-export_btn"]:hover {
         background-color: rgba(144, 238, 144, 0.4) !important;
+    }
+    
+    /* Target specific Streamlit emotion cache classes */
+    .st-emotion-cache-1kyxreq, .st-emotion-cache-16txtl3, .st-emotion-cache-10trblm,
+    .st-emotion-cache-1gulkj5, .st-emotion-cache-1erivf3, .st-emotion-cache-1wbqy5,
+    .st-emotion-cache-16idsys, .st-emotion-cache-4z1n4l {
+        background-color: white !important;
+        color: #262730 !important;
     }
 </style>
 """, unsafe_allow_html=True)
