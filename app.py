@@ -1,9 +1,9 @@
 import streamlit as st
 from utils.file_handler import save_uploaded_files
 from components.initialization import initialize_app_state, check_api_configuration
-from components.processor import initialize_processor, process_resumes, update_processing_status
+from components.processor import initialize_processor, process_resumes
 from components.results import display_results
-from components.filter import filter_resumes_with_nlp, simple_keyword_filter
+from components.filter import filter_resumes_with_nlp
 import os
 
 # Initialize app state
@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for styling - Updated for modern UI
+# Custom CSS for styling - Modern UI
 st.markdown("""
 <style>
     /* Global styles */
@@ -132,22 +132,6 @@ st.markdown("""
         padding: 0 1rem;
     }
     
-    /* Sample button */
-    .sample-button {
-        width: 100%;
-        padding: 0.75rem;
-        background-color: #fafafa;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-        font-weight: 500;
-        color: #555555;
-    }
-    
     /* Filter input */
     .filter-container {
         margin-top: 1.5rem;
@@ -160,12 +144,6 @@ st.markdown("""
         padding: 0.75rem 1rem;
         width: 100%;
         font-size: 1rem;
-    }
-    
-    .filter-hint {
-        color: #888888;
-        font-size: 0.85rem;
-        margin-top: 0.5rem;
     }
     
     /* Results section */
@@ -188,56 +166,12 @@ st.markdown("""
         color: #1a1a1a;
     }
     
-    .results-export-button {
-        background-color: #f8f9fa;
-        border: 1px solid #dee2e6;
-        border-radius: 4px;
-        padding: 8px 16px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-weight: 500;
-        color: #495057;
-    }
-    
-    /* Data table container */
     .data-table-container {
         border: 1px solid #e0e0e0;
         border-radius: 8px;
         overflow: hidden;
         margin-bottom: 2rem;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    
-    /* Button styles */
-    .custom-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-        padding: 0.5rem 1.25rem;
-        background-color: #f5f5f5;
-        border: 1px solid #e0e0e0;
-        border-radius: 50px;
-        font-weight: 500;
-        color: #333333;
-        text-decoration: none;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-    
-    .custom-button:hover {
-        background-color: #eeeeee;
-    }
-    
-    .custom-button.primary {
-        background-color: #4F46E5;
-        color: white;
-        border: none;
-    }
-    
-    .custom-button.primary:hover {
-        background-color: #4338CA;
     }
     
     /* Hide Streamlit components */
@@ -283,8 +217,29 @@ st.markdown("""
         border-radius: 4px;
         font-weight: 500;
     }
+    
+    /* Sample button and export button styles */
+    div[data-testid="stButton"] button {
+        height: 60px !important;
+        padding: 10px 30px !important;
+        font-size: 1rem !important;
+    }
+    
+    div[data-testid="stButton"] button[data-testid="stButton-export_btn"] {
+        background-color: rgba(144, 238, 144, 0.2) !important;
+        border: 1px solid rgba(144, 238, 144, 0.5) !important;
+        color: #2E8B57 !important;
+        transition: background-color 0.3s ease !important;
+    }
+    
+    div[data-testid="stButton"] button[data-testid="stButton-export_btn"]:hover {
+        background-color: rgba(144, 238, 144, 0.4) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# Check if Gemini API is configured
+check_api_configuration()
 
 # Main container
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
@@ -292,7 +247,7 @@ st.markdown('<div class="main-container">', unsafe_allow_html=True)
 # Logo and title section
 st.markdown('<div class="logo-container"><span style="font-size: 2.5rem;"></span></div>', unsafe_allow_html=True)
 st.markdown('<h1 class="main-title">Filter Resumes</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Upload, filter, and analyze resumes with natural language processing</p>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Upload, filter, and analyze resumes with Google Gemini</p>', unsafe_allow_html=True)
 
 # Top section labels (non-functional)
 st.markdown('<div class="action-labels">', unsafe_allow_html=True)
@@ -329,17 +284,6 @@ sample_clicked = st.button("⬆ Load Sample Resumes",
     help="Click to load pre-existing sample resume files"
 )
 
-# Add custom CSS to increase padding for the sample resumes button
-st.markdown("""
-<style>
-div[data-testid="stButton"] button {
-    height: 60px !important;
-    padding: 10px 30px !important;
-    font-size: 1rem !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
 # Filter input
 st.markdown('<div class="filter-container">', unsafe_allow_html=True)
 query = st.text_input(
@@ -350,7 +294,6 @@ col1, col2 = st.columns([1, 3])
 with col1:
     filter_button = st.button("⌕ Filter Resumes", key="filter_btn", help="Process and filter uploaded resumes")
 st.markdown('</div>', unsafe_allow_html=True)
-
 
 # Clear filtered results if query is cleared
 if not query and 'filtered_matches' in st.session_state:
@@ -381,7 +324,7 @@ if sample_clicked:
         else:
             sample_files = [f for f in os.listdir(sample_dir) if f.endswith(('.pdf', '.docx', '.doc', '.txt'))]
             if sample_files:
-                # Add sample files to pending_files instead of processing them immediately
+                # Add sample files to pending_files
                 if 'pending_files' not in st.session_state:
                     st.session_state.pending_files = []
                 
@@ -420,7 +363,7 @@ if filter_button and query:
         
         # Process files if needed
         if files_to_process:
-            with st.spinner("Processing resumes before filtering..."):
+            with st.spinner("Processing resumes with Google Gemini..."):
                 processor = initialize_processor(secrets_manager)
                 
                 # Default filters initially
@@ -445,29 +388,14 @@ if filter_button and query:
         # Now apply filters if we have processed resumes
         if 'matches' in st.session_state and st.session_state.matches:
             with st.spinner("Filtering resumes..."):
-                processor = st.session_state.gemini_processor if 'gemini_processor' in st.session_state and st.session_state.gemini_processor is not None else None
-                try:
-                    # First try with AI-based filtering
-                    if processor:
-                        filtered_results = filter_resumes_with_nlp(query, processor, st.session_state.matches)
-                        st.session_state.filtered_matches = filtered_results
-                        st.success(f"Found {len(filtered_results)} matching resumes")
-                    else:
-                        # Fallback to simple keyword filtering
-                        st.warning("AI processor not available. Using basic keyword filtering.")
-                        filtered_results = simple_keyword_filter(query, st.session_state.matches)
-                        st.session_state.filtered_matches = filtered_results
-                        st.success(f"Found {len(filtered_results)} matching resumes with basic filtering")
-                except Exception as e:
-                    # Handle any exceptions during filtering
-                    st.error(f"Error during advanced filtering: {str(e)}")
-                    st.warning("Falling back to basic keyword search...")
-                    filtered_results = simple_keyword_filter(query, st.session_state.matches)
-                    st.session_state.filtered_matches = filtered_results
-                    if filtered_results:
-                        st.success(f"Found {len(filtered_results)} matching resumes with basic filtering")
-                    else:
-                        st.warning("No matching resumes found")
+                processor = st.session_state.gemini_processor
+                filtered_results = filter_resumes_with_nlp(query, processor, st.session_state.matches)
+                st.session_state.filtered_matches = filtered_results
+                
+                if filtered_results:
+                    st.success(f"Found {len(filtered_results)} matching resumes")
+                else:
+                    st.warning("No matching resumes found")
         else:
             st.warning("No resumes have been processed yet. Please upload resumes and try again.")
     except Exception as e:
@@ -497,31 +425,15 @@ if 'filtered_matches' in st.session_state and st.session_state.filtered_matches:
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Export button at the bottom of the page with custom styling
-    export_button = st.button(" Export to Excel", 
+    export_button = st.button("Export to Excel", 
         key="export_btn", 
         help="Export filtered results to Excel", 
         use_container_width=True
     )
     
-    # Add custom CSS for the export button
-    st.markdown("""
-    <style>
-    div[data-testid="stButton"] button[data-testid="stButton-export_btn"] {
-        background-color: rgba(144, 238, 144, 0.2) !important;  /* Light green with transparency */
-        border: 1px solid rgba(144, 238, 144, 0.5) !important;
-        color: #2E8B57 !important;  /* Darker green text for contrast */
-        transition: background-color 0.3s ease !important;
-    }
-    div[data-testid="stButton"] button[data-testid="stButton-export_btn"]:hover {
-        background-color: rgba(144, 238, 144, 0.4) !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
     # Export functionality
-    # Export functionality for filtered matches
     if export_button:
-        data_to_export = st.session_state.filtered_matches if 'filtered_matches' in st.session_state and st.session_state.filtered_matches else st.session_state.matches if 'matches' in st.session_state else []
+        data_to_export = st.session_state.filtered_matches if 'filtered_matches' in st.session_state else []
         
         if data_to_export:
             try:
@@ -551,9 +463,6 @@ elif query and filter_button and not st.session_state.get('filtered_matches', []
     st.markdown('<div class="results-container">', unsafe_allow_html=True)
     st.warning(f"No resumes found matching '{query}'")
     st.markdown('</div>', unsafe_allow_html=True)
-
-# Check API configuration in background
-check_api_configuration()
 
 # Close main container
 st.markdown('</div>', unsafe_allow_html=True)

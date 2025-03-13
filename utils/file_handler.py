@@ -1,16 +1,21 @@
 import os
-import shutil
-from pathlib import Path
 import uuid
+from pathlib import Path
 import PyPDF2
 import docx
 import pdfplumber
 import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
-from utils.preprocessor import preprocess_resume_text
 
 def save_uploaded_files(uploaded_files):
+    """
+    Save uploaded files to the uploads directory with unique filenames
+    
+    Args:
+        uploaded_files: List of uploaded file objects from Streamlit
+        
+    Returns:
+        List of paths to the saved files
+    """
     saved_paths = []
     upload_dir = Path("data/uploads")
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -28,6 +33,15 @@ def save_uploaded_files(uploaded_files):
     return saved_paths
 
 def get_text_from_file(file_path):
+    """
+    Extract raw text content from a file without preprocessing
+    
+    Args:
+        file_path: Path to the file
+        
+    Returns:
+        Raw extracted text content ready for Gemini processing
+    """
     file_extension = Path(file_path).suffix.lower()
     
     try:
@@ -37,21 +51,27 @@ def get_text_from_file(file_path):
             raw_text = extract_text_from_docx(file_path)
         elif file_extension == ".txt":
             raw_text = extract_text_from_txt(file_path)
-        elif file_extension in [".png", ".jpg", ".jpeg"]:
-            raw_text = extract_text_from_image(file_path)
         else:
             return f"Unsupported file format: {file_extension}"
         
-        preprocessed_text = preprocess_resume_text(raw_text)
-        
-        return preprocessed_text
+        return raw_text
     except Exception as e:
         print(f"Error extracting text from {file_path}: {e}")
         return ""
 
 def extract_text_from_pdf(file_path):
+    """
+    Extract raw text from PDF using multiple methods for better reliability
+    
+    Args:
+        file_path: Path to the PDF file
+        
+    Returns:
+        Extracted text content
+    """
     text = ""
 
+    # Try PyMuPDF first (usually most reliable)
     try:
         with fitz.open(file_path) as pdf:
             for page in pdf:
@@ -61,13 +81,17 @@ def extract_text_from_pdf(file_path):
     except Exception as e:
         print(f"PyMuPDF failed: {e}")
 
+    # Fall back to pdfplumber if PyMuPDF fails
     try:
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
                 text += page.extract_text() + "\n"
+        if text.strip():
+            return text
     except Exception as e:
         print(f"pdfplumber failed: {e}")
 
+    # Last resort: PyPDF2
     try:
         with open(file_path, "rb") as file:
             pdf_reader = PyPDF2.PdfReader(file)
@@ -79,6 +103,15 @@ def extract_text_from_pdf(file_path):
     return text.strip()
 
 def extract_text_from_docx(file_path):
+    """
+    Extract raw text from DOCX file
+    
+    Args:
+        file_path: Path to the DOCX file
+        
+    Returns:
+        Extracted text content
+    """
     try:
         doc = docx.Document(file_path)
         return "\n".join([p.text for p in doc.paragraphs])
@@ -87,6 +120,15 @@ def extract_text_from_docx(file_path):
         return ""
 
 def extract_text_from_txt(file_path):
+    """
+    Extract raw text from TXT file
+    
+    Args:
+        file_path: Path to the TXT file
+        
+    Returns:
+        Extracted text content
+    """
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
             return file.read()
@@ -94,9 +136,23 @@ def extract_text_from_txt(file_path):
         print(f"Error reading TXT file {file_path}: {e}")
         return ""
 
-def extract_text_from_image(file_path):
-    try:
-        return pytesseract.image_to_string(Image.open(file_path))
-    except Exception as e:
-        print(f"OCR extraction failed for {file_path}: {e}")
-        return ""
+def extract_name_from_file(file_path):
+    """
+    Try to extract a candidate name from file name
+    
+    Args:
+        file_path: Path to the resume file
+        
+    Returns:
+        Candidate name if it appears to be in the filename, otherwise None
+    """
+    filename = os.path.basename(file_path)
+    filename = os.path.splitext(filename)[0]
+    filename = filename.replace('_', ' ').replace('-', ' ')
+    
+    # If the filename has 2-3 words and only letters, it's likely a name
+    words = filename.split()
+    if 2 <= len(words) <= 3 and all(word.isalpha() for word in words):
+        return ' '.join(words)
+    
+    return None

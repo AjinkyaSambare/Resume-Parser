@@ -1,14 +1,13 @@
 import streamlit as st
-import pandas as pd
 import json
 
 def filter_resumes_with_nlp(query, processor, resumes):
     """
-    Filter resumes using natural language processing based on user query
+    Filter resumes using Gemini's natural language processing based on user query
     
     Args:
         query (str): User's natural language query (e.g., "Java developers with 5+ years experience")
-        processor: The NLP processor instance
+        processor: The Gemini processor instance
         resumes (list): List of resume data dictionaries
         
     Returns:
@@ -18,22 +17,18 @@ def filter_resumes_with_nlp(query, processor, resumes):
         return resumes
         
     try:
-        # Convert query to structured filters
-        if processor:
-            filters = process_nlp_query(query, processor)
-            
-            # Apply filters to resumes
-            filtered_resumes = []
-            for resume in resumes:
-                if matches_filters(resume, filters):
-                    filtered_resumes.append(resume)
-                    
-            # If no matches through structured filtering, try basic keyword filtering as backup
-            if not filtered_resumes:
-                st.info("No matches found with structured filtering. Trying keyword search...")
-                filtered_resumes = simple_keyword_filter(query, resumes)
-        else:
-            # Fallback to simple keyword filtering
+        # Use Gemini to create a filtering prompt
+        filters = process_nlp_query(query, processor)
+        
+        # Apply the filters to each resume
+        filtered_resumes = []
+        for resume in resumes:
+            if matches_filters(resume, filters):
+                filtered_resumes.append(resume)
+        
+        # If no matches, try basic keyword filtering as backup
+        if not filtered_resumes:
+            st.info("No matches found with structured filtering. Trying keyword search...")
             filtered_resumes = simple_keyword_filter(query, resumes)
             
         return filtered_resumes
@@ -78,11 +73,11 @@ def simple_keyword_filter(query, resumes):
 
 def process_nlp_query(query, processor):
     """
-    Process natural language query into structured filters
+    Process natural language query into structured filters using Gemini
     
     Args:
         query (str): User's natural language query
-        processor: The NLP processor instance
+        processor: The Gemini processor instance
         
     Returns:
         dict: Structured filters
@@ -106,7 +101,6 @@ def process_nlp_query(query, processor):
     
     try:
         result = processor._call_gemini_with_retry(prompt)
-        # Clean the response to ensure it contains only valid JSON
         result = result.strip()
         
         # Try to find JSON in the response by looking for opening/closing braces
@@ -152,7 +146,6 @@ def matches_filters(resume, filters):
     Returns:
         bool: True if the resume matches the filters
     """
-    # Simple implementation - can be expanded for more sophisticated matching
     resume_text = str(resume).lower()
     
     # Skills matching

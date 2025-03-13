@@ -12,30 +12,14 @@ from queue import Queue
 import concurrent.futures
 from pathlib import Path
 from utils.file_handler import get_text_from_file
-from utils.preprocessor import extract_name_from_file
 
 # Check if Google Generative AI is available
-GEMINI_AVAILABLE = False
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
 except ImportError:
-    print("Google Generative AI package not available. Gemini features will be disabled.")
-    # Create a placeholder for genai if it's not available
-    class GenaiPlaceholder:
-        def configure(self, *args, **kwargs):
-            pass
-        
-        class GenerativeModel:
-            def __init__(self, *args, **kwargs):
-                pass
-                
-            def generate_content(self, *args, **kwargs):
-                class Response:
-                    text = "Google Generative AI not available"
-                return Response()
-    
-    genai = GenaiPlaceholder()
+    GEMINI_AVAILABLE = False
+    print("Google Generative AI package not available. Install it using: pip install google-generativeai")
 
 class RateLimiter:
     """
@@ -173,7 +157,8 @@ class GeminiProcessor:
         self.queue = ProcessingQueue(self)
         
         if not GEMINI_AVAILABLE:
-            print("Warning: Google Generative AI package not available. Gemini features will be limited.")
+            print("Warning: Google Generative AI package not available. Install with pip install google-generativeai")
+            return
         
         # Configure the Gemini API
         try:
@@ -200,26 +185,21 @@ class GeminiProcessor:
                 'experience': 0,
                 'skills': '',
                 'location': '',
-                'linkedin': '',
-                'github': '',
-                'languages': '',
-                'certifications': '',
-                'work_history': [],
-                'work_history_summary': '',
                 'filename': os.path.basename(file_path),
                 'file_path': file_path,
                 'error': "Google Generative AI package not installed"
             }
             
         try:
-            # Try to extract name from filename as a hint
-            name_from_filename = extract_name_from_file(file_path)
+            # Get the filename without extension (may contain candidate name)
+            filename = os.path.basename(file_path)
+            name_from_filename = os.path.splitext(filename)[0].replace('_', ' ').replace('-', ' ')
             
-            # Extract text from file (includes preprocessing)
+            # Extract text from file 
             text = get_text_from_file(file_path)
             
-            # Trim text if it's too long
-            if len(text) > 30000:  # Gemini can handle more tokens than GPT-4o
+            # Trim text if it's too long for the Gemini API
+            if len(text) > 30000:  
                 print(f"Warning: Document {file_path} is very long ({len(text)} chars). Truncating.")
                 text = text[:30000]
             
@@ -236,9 +216,8 @@ class GeminiProcessor:
             # Parse the response
             extracted_info = self._parse_response(response)
             
-            # Add filename for reference
+            # Add filename and file path for reference
             extracted_info['filename'] = os.path.basename(file_path)
-            # Add file path for reference
             extracted_info['file_path'] = file_path
             
             return extracted_info
@@ -253,12 +232,6 @@ class GeminiProcessor:
                 'experience': 0,
                 'skills': '',
                 'location': '',
-                'linkedin': '',
-                'github': '',
-                'languages': '',
-                'certifications': '',
-                'work_history': [],
-                'work_history_summary': '',
                 'filename': os.path.basename(file_path),
                 'file_path': file_path,
                 'error': str(e)
@@ -273,7 +246,7 @@ class GeminiProcessor:
         - user_filters: Dictionary containing user's filter preferences
         
         Returns:
-        - Extracted information as a dictionary
+        - Extracted information as a dictionary with match score
         """
         if not GEMINI_AVAILABLE:
             return {
@@ -284,12 +257,6 @@ class GeminiProcessor:
                 'experience': 0,
                 'skills': '',
                 'location': '',
-                'linkedin': '',
-                'github': '',
-                'languages': '',
-                'certifications': '',
-                'work_history': [],
-                'work_history_summary': '',
                 'match_score': 0,
                 'filename': os.path.basename(file_path),
                 'file_path': file_path,
@@ -297,8 +264,11 @@ class GeminiProcessor:
             }
             
         try:
-            # Extract name and text, similar to analyze_document
-            name_from_filename = extract_name_from_file(file_path)
+            # Get the filename without extension (may contain candidate name)
+            filename = os.path.basename(file_path)
+            name_from_filename = os.path.splitext(filename)[0].replace('_', ' ').replace('-', ' ')
+            
+            # Extract text from file
             text = get_text_from_file(file_path)
             
             if len(text) > 30000:
@@ -331,12 +301,6 @@ class GeminiProcessor:
                 'experience': 0,
                 'skills': '',
                 'location': '',
-                'linkedin': '',
-                'github': '',
-                'languages': '',
-                'certifications': '',
-                'work_history': [],
-                'work_history_summary': '',
                 'match_score': 0,
                 'filename': os.path.basename(file_path),
                 'file_path': file_path,
@@ -450,60 +414,6 @@ class GeminiProcessor:
         """
         return self.queue.get_all_task_statuses()
     
-    def process_documents_in_parallel(self, file_paths, user_filters=None, max_workers=5):
-        """
-        Process multiple documents in parallel
-        
-        Parameters:
-        - file_paths: List of file paths to process
-        - user_filters: Optional user filters to apply
-        - max_workers: Maximum number of parallel workers
-        
-        Returns:
-        - List of processed results
-        """
-        if not GEMINI_AVAILABLE:
-            return [
-                {
-                    'name': f"Error processing {os.path.basename(file_path)}",
-                    'error': "Google Generative AI package not installed",
-                    'filename': os.path.basename(file_path),
-                    'file_path': file_path,
-                    'match_score': 0
-                }
-                for file_path in file_paths
-            ]
-            
-        results = []
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Create the processing tasks
-            if user_filters:
-                futures = {executor.submit(self.analyze_document_with_filters, file_path, user_filters): file_path 
-                          for file_path in file_paths}
-            else:
-                futures = {executor.submit(self.analyze_document, file_path): file_path 
-                          for file_path in file_paths}
-            
-            # Process as they complete
-            for future in concurrent.futures.as_completed(futures):
-                file_path = futures[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    print(f"Error processing {file_path}: {e}")
-                    # Add error result
-                    results.append({
-                        'name': f"Error processing {os.path.basename(file_path)}",
-                        'error': str(e),
-                        'filename': os.path.basename(file_path),
-                        'file_path': file_path,
-                        'match_score': 0
-                    })
-        
-        return results
-    
     def _create_resume_parsing_prompt(self, resume_text, name_hint=None):
         """
         Create a prompt for Gemini to extract information from a resume
@@ -512,28 +422,19 @@ class GeminiProcessor:
         if name_hint:
             name_hint_text = f"\nHINT: The candidate's name might be '{name_hint}' based on the filename."
             
-        prompt = f"""You are an expert resume parser with extensive experience in HR and technical recruiting. Your task is to extract precise information from the resume text below, following these detailed guidelines:{name_hint_text}
-
-# SPECIAL INSTRUCTIONS FOR COMPLEX FORMATTING
-This resume may have unusual formatting with asterisks (**), special characters, or non-standard layouts.
-- Look for the name which might be in the format **Name** or could be anywhere in the document
-- Extract all skills mentioned throughout the document, including in project descriptions
-- Consider internships as valid experience and count them in the total years
-- Extract phone numbers, emails, and location information wherever they appear
-- Parse education information even when it's mixed with formatting characters
-- Be thorough in identifying technologies mentioned in project descriptions
+        prompt = f"""You are an expert resume parser with extensive experience in HR and technical recruiting. Extract precise information from this resume:{name_hint_text}
 
 # EXTRACTION GUIDELINES:
 
 ## Personal Information
-1. Name: Extract the full name exactly as presented (check for **Name** patterns or standalone names)
-2. Email: Extract complete email address (search the entire document)
-3. Phone: Extract phone number with all digits and formatting (search the entire document)
-4. Location: Extract city, state/province, country information (look at the beginning and end of document)
+1. Name: Extract the full name
+2. Email: Extract complete email address
+3. Phone: Extract phone number with formatting
+4. Location: Extract city, state/province, country information
 
 ## Professional Details
 5. Work Experience:
-   - Calculate total years of experience accurately (round to nearest whole number)
+   - Calculate total years of experience (round to nearest whole number)
    - Count internships as valid experience
    - Identify all companies and positions held
    - Extract dates of employment
@@ -545,16 +446,10 @@ This resume may have unusual formatting with asterisks (**), special characters,
    - Extract graduation years
    - Note any academic honors or GPA if mentioned
 
-7. Online Profiles:
-   - Extract complete LinkedIn URL if present (ensure it's the full URL)
-   - Extract complete GitHub URL if present (ensure it's the full URL)
-   - Extract any other professional profiles mentioned
-
-8. Technical Information:
+7. Technical Information:
    - Skills: Extract ALL technical skills mentioned anywhere in the resume
-   - Include technologies mentioned in project descriptions
-   - Languages: Extract all human languages mentioned with proficiency levels if specified
-   - Certifications: Extract all professional certifications with dates if mentioned
+   - Languages: Extract all programming and human languages with proficiency levels
+   - Certifications: Extract all professional certifications
 
 # FORMAT REQUIREMENTS:
 
